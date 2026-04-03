@@ -203,8 +203,6 @@ class PaddleOCRService:
         **kwargs: Any,
     ) -> OCRResult:
         """Extract text with the local PaddleOCR detection/recognition pipeline."""
-        del prompt, stream_info, kwargs
-
         try:
             image = _load_image_for_local_backends(image_stream)
             result = self._get_engine().ocr(image, cls=self.use_angle_cls)
@@ -253,12 +251,14 @@ class LocalVLMOCRService:
         device: str | None = None,
         default_prompt: str | None = None,
         task: str = "image-text-to-text",
+        call_mode: str | None = None,
         **pipeline_options: Any,
     ) -> None:
         self._pipeline = pipeline
         self.model = model
         self.device = device
         self.task = task
+        self.call_mode = call_mode
         self.pipeline_options = pipeline_options
         self.backend_name = "local_vlm"
         self.default_prompt = default_prompt or (
@@ -274,7 +274,6 @@ class LocalVLMOCRService:
         **kwargs: Any,
     ) -> OCRResult:
         """Extract text using a local multimodal generation pipeline."""
-        del stream_info
         try:
             image = _load_pil_image(image_stream)
             response = self._invoke_pipeline(
@@ -298,30 +297,43 @@ class LocalVLMOCRService:
 
     def _invoke_pipeline(self, *, image: Any, prompt: str, **kwargs: Any) -> Any:
         pipeline = self._get_pipeline()
-        attempts = (
-            lambda: pipeline(image, prompt=prompt, **kwargs),
-            lambda: pipeline(images=image, prompt=prompt, **kwargs),
-            lambda: pipeline(image=image, prompt=prompt, **kwargs),
-            lambda: pipeline(image, text=prompt, **kwargs),
-            lambda: pipeline(images=image, text=prompt, **kwargs),
-            lambda: pipeline(image, **kwargs),
-        )
-        last_error: Exception | None = None
-        for attempt in attempts:
+        if self.call_mode is not None:
+            return _invoke_vlm_pipeline(
+                pipeline=pipeline,
+                call_mode=self.call_mode,
+                image=image,
+                prompt=prompt,
+                **kwargs,
+            )
+
+        attempts = [
+            ("image_prompt", lambda: pipeline(image, prompt=prompt, **kwargs)),
+            ("images_prompt", lambda: pipeline(images=image, prompt=prompt, **kwargs)),
+            ("named_image_prompt", lambda: pipeline(image=image, prompt=prompt, **kwargs)),
+            ("image_text", lambda: pipeline(image, text=prompt, **kwargs)),
+            ("images_text", lambda: pipeline(images=image, text=prompt, **kwargs)),
+            ("image_only", lambda: pipeline(image, **kwargs)),
+        ]
+        errors: list[str] = []
+        for attempt_name, attempt in attempts:
             try:
                 return attempt()
             except TypeError as exc:
-                last_error = exc
+                errors.append(f"{attempt_name}: {exc}")
                 continue
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError("Local VLM pipeline could not be invoked")
+        raise RuntimeError(
+            "Local VLM pipeline could not be invoked with any supported calling "
+            f"pattern. Tried: {'; '.join(errors)}"
+        )
 
     def _get_pipeline(self) -> Any:
         if self._pipeline is not None:
             return self._pipeline
         if not self.model:
-            raise RuntimeError("local_vlm backend requires `ocr_model` or `ocr_vlm_pipeline`")
+            raise RuntimeError(
+                "local_vlm backend requires either an `ocr_vlm_pipeline` object "
+                "or an `ocr_model` identifier"
+            )
 
         try:
             from transformers import pipeline
@@ -396,7 +408,13 @@ def create_ocr_service(**kwargs: Any) -> OCRService | None:
     if ocr_backend == "paddleocr":
         return _build_paddleocr_service(**kwargs)
 
-    if ocr_backend in ("local_vlm", "vlm", "paddleocr_vl", "paddleocr_vl_1.5"):
+    if ocr_backend in (
+        "local_vlm",
+        "vlm",
+        "paddleocr_vl",
+        "paddleocr_vl_1_5",
+        "paddleocr_vl_15",
+    ):
         vlm_kwargs = kwargs.copy()
         vlm_kwargs.pop("ocr_model", None)
         vlm_kwargs.pop("ocr_prompt", None)
@@ -462,6 +480,10 @@ def _build_openai_compatible_client(**kwargs: Any) -> Any | None:
 def _build_paddleocr_service(**kwargs: Any) -> PaddleOCRService:
     """Create a local PaddleOCR service from kwargs/environment."""
     backend_options = (kwargs.get("ocr_backend_options") or {}).copy()
+    env_use_angle_cls = _coerce_bool(
+        os.getenv("MARKITDOWN_OCR_USE_ANGLE_CLS"),
+        default=True,
+    )
     return PaddleOCRService(
         engine=kwargs.get("ocr_paddle_engine"),
         lang=_first_non_empty(
@@ -470,7 +492,7 @@ def _build_paddleocr_service(**kwargs: Any) -> PaddleOCRService:
         ),
         use_angle_cls=_coerce_bool(
             kwargs.get("ocr_use_angle_cls"),
-            default=_coerce_bool(os.getenv("MARKITDOWN_OCR_USE_ANGLE_CLS"), default=True),
+            default=env_use_angle_cls,
         ),
         **backend_options,
     )
@@ -493,6 +515,10 @@ def _build_local_vlm_service(
         ),
         default_prompt=ocr_prompt,
         task=_first_non_empty(kwargs.get("ocr_task")) or "image-text-to-text",
+        call_mode=_first_non_empty(
+            kwargs.get("ocr_vlm_call_mode"),
+            os.getenv("MARKITDOWN_OCR_VLM_CALL_MODE"),
+        ),
         **backend_options,
     )
 
@@ -568,6 +594,28 @@ def _load_image_for_local_backends(image_stream: BinaryIO) -> Any:
     return np.array(image)
 
 
+def _invoke_vlm_pipeline(
+    *,
+    pipeline: Any,
+    call_mode: str,
+    image: Any,
+    prompt: str,
+    **kwargs: Any,
+) -> Any:
+    """Invoke a VLM pipeline with an explicit calling convention."""
+    if call_mode == "image_prompt":
+        return pipeline(image, prompt=prompt, **kwargs)
+    if call_mode == "images_prompt":
+        return pipeline(images=image, prompt=prompt, **kwargs)
+    if call_mode == "image_text":
+        return pipeline(image, text=prompt, **kwargs)
+    if call_mode == "images_text":
+        return pipeline(images=image, text=prompt, **kwargs)
+    if call_mode == "image_only":
+        return pipeline(image, **kwargs)
+    raise ValueError(f"Unsupported local VLM call mode: {call_mode}")
+
+
 def _parse_paddleocr_output(result: Any) -> tuple[str, float | None]:
     """Parse PaddleOCR outputs into plain text and an average confidence score."""
     texts: list[str] = []
@@ -605,7 +653,6 @@ def _parse_paddleocr_output(result: Any) -> tuple[str, float | None]:
                         scores.append(float(score_candidate))
                     except (TypeError, ValueError):
                         pass
-                    return
             for item in node:
                 visit(item)
 
@@ -631,11 +678,15 @@ def _first_non_empty(*values: Any) -> str | None:
 
 
 def _normalize_backend_name(*values: Any) -> str | None:
-    """Normalize backend names to lowercase underscore form."""
+    """Normalize backend names to lowercase underscore form.
+
+    This lets users pass either hyphenated or dotted backend aliases such as
+    ``paddleocr-vl-1.5`` while internal comparisons use a stable format.
+    """
     value = _first_non_empty(*values)
     if value is None:
         return None
-    normalized = value.strip().lower().replace("-", "_")
+    normalized = value.strip().lower().replace("-", "_").replace(".", "_")
     return normalized or None
 
 

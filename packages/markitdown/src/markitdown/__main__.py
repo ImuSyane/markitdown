@@ -251,7 +251,15 @@ def _handle_output(args, result: DocumentConverterResult):
 
 
 def _build_markitdown_kwargs(args: argparse.Namespace) -> dict:
-    """Build MarkItDown constructor kwargs from CLI arguments and env fallbacks."""
+    """Build MarkItDown constructor kwargs from parsed CLI arguments.
+
+    Args:
+        args: Parsed argparse namespace.
+
+    Returns:
+        Keyword arguments for ``MarkItDown(...)``, with CLI values taking
+        precedence over ``MARKITDOWN_OCR_*`` environment variables.
+    """
     kwargs = {
         "enable_plugins": args.use_plugins,
     }
