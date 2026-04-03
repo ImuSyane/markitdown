@@ -13,7 +13,7 @@ from markitdown._exceptions import (
     MissingDependencyException,
     MISSING_DEPENDENCY_MESSAGE,
 )
-from ._ocr_service import LLMVisionOCRService
+from ._ocr_service import OCRService
 
 # Try loading dependencies
 _xlsx_dependency_exc_info = None
@@ -30,7 +30,7 @@ class XlsxConverterWithOCR(DocumentConverter):
     Extracts images with their cell positions and performs OCR.
     """
 
-    def __init__(self, ocr_service: Optional[LLMVisionOCRService] = None):
+    def __init__(self, ocr_service: Optional[OCRService] = None):
         super().__init__()
         self._html_converter = HtmlConverter()
         self.ocr_service = ocr_service
@@ -72,7 +72,7 @@ class XlsxConverterWithOCR(DocumentConverter):
             )  # type: ignore[union-attr]
 
         # Get OCR service if available (from kwargs or instance)
-        ocr_service: Optional[LLMVisionOCRService] = (
+        ocr_service: Optional[OCRService] = (
             kwargs.get("ocr_service") or self.ocr_service
         )
 
@@ -106,7 +106,7 @@ class XlsxConverterWithOCR(DocumentConverter):
         return DocumentConverterResult(markdown=md_content.strip())
 
     def _convert_with_ocr(
-        self, file_stream: BinaryIO, ocr_service: LLMVisionOCRService, **kwargs: Any
+        self, file_stream: BinaryIO, ocr_service: OCRService, **kwargs: Any
     ) -> DocumentConverterResult:
         """Convert XLSX with image OCR."""
         file_stream.seek(0)
@@ -147,7 +147,7 @@ class XlsxConverterWithOCR(DocumentConverter):
         return DocumentConverterResult(markdown=md_content.strip())
 
     def _extract_and_ocr_sheet_images(
-        self, sheet: Any, ocr_service: LLMVisionOCRService
+        self, sheet: Any, ocr_service: OCRService
     ) -> list[dict]:
         """
         Extract and OCR images from an Excel sheet.

@@ -15,7 +15,7 @@ from markitdown._exceptions import (
     MissingDependencyException,
     MISSING_DEPENDENCY_MESSAGE,
 )
-from ._ocr_service import LLMVisionOCRService
+from ._ocr_service import OCRService
 
 # Try loading dependencies
 _dependency_exc_info = None
@@ -36,7 +36,7 @@ class DocxConverterWithOCR(HtmlConverter):
     Maintains document flow while extracting text from images inline.
     """
 
-    def __init__(self, ocr_service: Optional[LLMVisionOCRService] = None):
+    def __init__(self, ocr_service: Optional[OCRService] = None):
         super().__init__()
         self._html_converter = HtmlConverter()
         self.ocr_service = ocr_service
@@ -78,7 +78,7 @@ class DocxConverterWithOCR(HtmlConverter):
             )  # type: ignore[union-attr]
 
         # Get OCR service if available (from kwargs or instance)
-        ocr_service: Optional[LLMVisionOCRService] = (
+        ocr_service: Optional[OCRService] = (
             kwargs.get("ocr_service") or self.ocr_service
         )
 
@@ -124,7 +124,7 @@ class DocxConverterWithOCR(HtmlConverter):
             )
 
     def _extract_and_ocr_images(
-        self, file_stream: BinaryIO, ocr_service: LLMVisionOCRService
+        self, file_stream: BinaryIO, ocr_service: OCRService
     ) -> dict[str, str]:
         """
         Extract images from DOCX and OCR them.

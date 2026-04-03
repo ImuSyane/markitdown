@@ -15,7 +15,7 @@ from markitdown._exceptions import (
     MissingDependencyException,
     MISSING_DEPENDENCY_MESSAGE,
 )
-from ._ocr_service import LLMVisionOCRService
+from ._ocr_service import OCRService
 
 _dependency_exc_info = None
 try:
@@ -27,7 +27,7 @@ except ImportError:
 class PptxConverterWithOCR(DocumentConverter):
     """Enhanced PPTX Converter with OCR fallback."""
 
-    def __init__(self, ocr_service: Optional[LLMVisionOCRService] = None):
+    def __init__(self, ocr_service: Optional[OCRService] = None):
         super().__init__()
         self._html_converter = HtmlConverter()
         self.ocr_service = ocr_service
@@ -69,7 +69,7 @@ class PptxConverterWithOCR(DocumentConverter):
             )  # type: ignore[union-attr]
 
         # Get OCR service (from kwargs or instance)
-        ocr_service: Optional[LLMVisionOCRService] = (
+        ocr_service: Optional[OCRService] = (
             kwargs.get("ocr_service") or self.ocr_service
         )
         llm_client = kwargs.get("llm_client")

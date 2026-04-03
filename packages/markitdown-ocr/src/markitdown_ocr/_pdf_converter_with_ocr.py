@@ -12,7 +12,7 @@ from markitdown._exceptions import (
     MissingDependencyException,
     MISSING_DEPENDENCY_MESSAGE,
 )
-from ._ocr_service import LLMVisionOCRService
+from ._ocr_service import OCRService
 
 # Import dependencies
 _dependency_exc_info = None
@@ -132,7 +132,7 @@ class PdfConverterWithOCR(DocumentConverter):
     Maintains document structure while extracting text from images inline.
     """
 
-    def __init__(self, ocr_service: Optional[LLMVisionOCRService] = None):
+    def __init__(self, ocr_service: Optional[OCRService] = None):
         super().__init__()
         self.ocr_service = ocr_service
 
@@ -173,7 +173,7 @@ class PdfConverterWithOCR(DocumentConverter):
             )  # type: ignore[union-attr]
 
         # Get OCR service if available (from kwargs or instance)
-        ocr_service: LLMVisionOCRService | None = (
+        ocr_service: OCRService | None = (
             kwargs.get("ocr_service") or self.ocr_service
         )
 
@@ -338,7 +338,7 @@ class PdfConverterWithOCR(DocumentConverter):
         return images
 
     def _ocr_full_pages(
-        self, pdf_bytes: io.BytesIO, ocr_service: LLMVisionOCRService
+        self, pdf_bytes: io.BytesIO, ocr_service: OCRService
     ) -> str:
         """
         Fallback for scanned PDFs: Convert entire pages to images and OCR them.

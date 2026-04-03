@@ -11,7 +11,11 @@ from ._plugin import __plugin_interface_version__, register_converters
 from .__about__ import __version__
 from ._ocr_service import (
     OCRResult,
+    OCRService,
+    CallableOCRService,
     LLMVisionOCRService,
+    OpenAICompatibleOCRService,
+    create_ocr_service,
 )
 from ._pdf_converter_with_ocr import PdfConverterWithOCR
 from ._docx_converter_with_ocr import DocxConverterWithOCR
@@ -23,7 +27,11 @@ __all__ = [
     "__plugin_interface_version__",
     "register_converters",
     "OCRResult",
+    "OCRService",
+    "CallableOCRService",
     "LLMVisionOCRService",
+    "OpenAICompatibleOCRService",
+    "create_ocr_service",
     "PdfConverterWithOCR",
     "DocxConverterWithOCR",
     "PptxConverterWithOCR",

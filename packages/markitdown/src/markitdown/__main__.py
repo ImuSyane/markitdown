@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: MIT
 import argparse
+import os
 import sys
 import codecs
 from textwrap import dedent
@@ -110,6 +111,31 @@ def main():
         help="Keep data URIs (like base64-encoded images) in the output. By default, data URIs are truncated.",
     )
 
+    parser.add_argument(
+        "--ocr-backend",
+        help="OCR backend for plugins (for example: llm_vision, openai_compatible).",
+    )
+
+    parser.add_argument(
+        "--ocr-model",
+        help="Model name for OCR backends that use vision-capable APIs.",
+    )
+
+    parser.add_argument(
+        "--ocr-prompt",
+        help="Custom OCR extraction prompt for OCR-capable plugins.",
+    )
+
+    parser.add_argument(
+        "--ocr-base-url",
+        help="Base URL for an OpenAI-compatible OCR API provider.",
+    )
+
+    parser.add_argument(
+        "--ocr-api-key",
+        help="API key for an OpenAI-compatible OCR API provider. Defaults to MARKITDOWN_OCR_API_KEY or OPENAI_API_KEY.",
+    )
+
     parser.add_argument("filename", nargs="?")
     args = parser.parse_args()
 
@@ -172,6 +198,8 @@ def main():
             )
         sys.exit(0)
 
+    markitdown_kwargs = _build_markitdown_kwargs(args)
+
     if args.use_docintel:
         if args.endpoint is None:
             _exit_with_error(
@@ -180,11 +208,9 @@ def main():
         elif args.filename is None:
             _exit_with_error("Filename is required when using Document Intelligence.")
 
-        markitdown = MarkItDown(
-            enable_plugins=args.use_plugins, docintel_endpoint=args.endpoint
-        )
+        markitdown = MarkItDown(**markitdown_kwargs, docintel_endpoint=args.endpoint)
     else:
-        markitdown = MarkItDown(enable_plugins=args.use_plugins)
+        markitdown = MarkItDown(**markitdown_kwargs)
 
     if args.filename is None:
         result = markitdown.convert_stream(
@@ -212,6 +238,41 @@ def _handle_output(args, result: DocumentConverterResult):
                 sys.stdout.encoding
             )
         )
+
+
+def _build_markitdown_kwargs(args: argparse.Namespace) -> dict:
+    kwargs = {
+        "enable_plugins": args.use_plugins,
+    }
+
+    if args.ocr_backend:
+        kwargs["ocr_backend"] = args.ocr_backend
+    elif os.getenv("MARKITDOWN_OCR_BACKEND"):
+        kwargs["ocr_backend"] = os.getenv("MARKITDOWN_OCR_BACKEND")
+
+    if args.ocr_model:
+        kwargs["ocr_model"] = args.ocr_model
+    elif os.getenv("MARKITDOWN_OCR_MODEL"):
+        kwargs["ocr_model"] = os.getenv("MARKITDOWN_OCR_MODEL")
+
+    if args.ocr_prompt:
+        kwargs["ocr_prompt"] = args.ocr_prompt
+    elif os.getenv("MARKITDOWN_OCR_PROMPT"):
+        kwargs["ocr_prompt"] = os.getenv("MARKITDOWN_OCR_PROMPT")
+
+    if args.ocr_base_url:
+        kwargs["ocr_base_url"] = args.ocr_base_url
+    elif os.getenv("MARKITDOWN_OCR_BASE_URL"):
+        kwargs["ocr_base_url"] = os.getenv("MARKITDOWN_OCR_BASE_URL")
+
+    if args.ocr_api_key:
+        kwargs["ocr_api_key"] = args.ocr_api_key
+    elif os.getenv("MARKITDOWN_OCR_API_KEY"):
+        kwargs["ocr_api_key"] = os.getenv("MARKITDOWN_OCR_API_KEY")
+    elif os.getenv("OPENAI_API_KEY"):
+        kwargs["ocr_api_key"] = os.getenv("OPENAI_API_KEY")
+
+    return kwargs
 
 
 def _exit_with_error(message: str):

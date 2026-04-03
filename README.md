@@ -134,7 +134,7 @@ To find available plugins, search GitHub for the hashtag `#markitdown-plugin`. T
 
 #### markitdown-ocr Plugin
 
-The `markitdown-ocr` plugin adds OCR support to PDF, DOCX, PPTX, and XLSX converters, extracting text from embedded images using LLM Vision — the same `llm_client` / `llm_model` pattern that MarkItDown already uses for image descriptions. No new ML libraries or binary dependencies required.
+The `markitdown-ocr` plugin adds OCR support to PDF, DOCX, PPTX, and XLSX converters. It supports the existing `llm_client` / `llm_model` flow, direct `ocr_service` injection, and OpenAI-compatible OCR/VLM providers via `ocr_backend="openai_compatible"`.
 
 **Installation:**
 
@@ -161,6 +161,20 @@ print(result.text_content)
 ```
 
 If no `llm_client` is provided the plugin still loads, but OCR is silently skipped and the standard built-in converter is used instead.
+
+For OpenAI-compatible OCR endpoints, you can configure OCR separately:
+
+```python
+md = MarkItDown(
+    enable_plugins=True,
+    ocr_backend="openai_compatible",
+    ocr_model="glm-ocr",
+    ocr_base_url="https://your-provider.example/v1",
+    ocr_api_key="...",
+)
+```
+
+CLI users can provide the same settings with `--ocr-backend`, `--ocr-model`, `--ocr-base-url`, and `--ocr-api-key`, or via the `MARKITDOWN_OCR_*` environment variables.
 
 See [`packages/markitdown-ocr/README.md`](packages/markitdown-ocr/README.md) for detailed documentation.
 

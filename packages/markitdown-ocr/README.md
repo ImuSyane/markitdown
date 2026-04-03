@@ -1,8 +1,12 @@
 # MarkItDown OCR Plugin
 
-LLM Vision plugin for MarkItDown that extracts text from images embedded in PDF, DOCX, PPTX, and XLSX files.
+OCR plugin for MarkItDown that extracts text from images embedded in PDF, DOCX, PPTX, and XLSX files.
 
-Uses the same `llm_client` / `llm_model` pattern that MarkItDown already supports for image descriptions — no new ML libraries or binary dependencies required.
+It supports:
+
+- the existing `llm_client` / `llm_model` pattern already used by MarkItDown
+- a dedicated `ocr_service` hook for custom OCR implementations
+- OpenAI-compatible OCR/VLM providers configured with `ocr_backend="openai_compatible"`
 
 ## Features
 
@@ -28,8 +32,15 @@ pip install openai
 
 ### Command Line
 
+Use environment variables plus the new OCR CLI flags:
+
 ```bash
-markitdown document.pdf --use-plugins --llm-client openai --llm-model gpt-4o
+export MARKITDOWN_OCR_API_KEY=...
+markitdown document.pdf \
+  --use-plugins \
+  --ocr-backend openai_compatible \
+  --ocr-model glm-ocr \
+  --ocr-base-url https://your-provider.example/v1
 ```
 
 ### Python API
@@ -50,6 +61,35 @@ result = md.convert("document_with_images.pdf")
 print(result.text_content)
 ```
 
+Use a dedicated OCR client/model if you want OCR to be configured separately from image captioning:
+
+```python
+from markitdown import MarkItDown
+from openai import OpenAI
+
+md = MarkItDown(
+    enable_plugins=True,
+    ocr_client=OpenAI(base_url="https://your-provider.example/v1", api_key="..."),
+    ocr_model="paddleocr-vl-1.5",
+)
+```
+
+Or inject your own OCR implementation directly:
+
+```python
+from io import BytesIO
+from markitdown import MarkItDown
+from markitdown_ocr import OCRResult
+
+
+class MyOCRService:
+    def extract_text(self, image_stream: BytesIO, **kwargs) -> OCRResult:
+        return OCRResult(text="...", backend_used="my_ocr")
+
+
+md = MarkItDown(enable_plugins=True, ocr_service=MyOCRService())
+```
+
 If no `llm_client` is provided the plugin still loads, but OCR is silently skipped — falling back to the standard built-in converter.
 
 ### Custom Prompt
@@ -65,31 +105,33 @@ md = MarkItDown(
 )
 ```
 
-### Any OpenAI-Compatible Client
+### OpenAI-Compatible OCR Providers
 
-Works with any client that follows the OpenAI API:
+Works with any OCR/VLM provider that exposes an OpenAI-compatible chat-completions API:
 
 ```python
 from openai import AzureOpenAI
 
 md = MarkItDown(
     enable_plugins=True,
-    llm_client=AzureOpenAI(
-        api_key="...",
-        azure_endpoint="https://your-resource.openai.azure.com/",
-        api_version="2024-02-01",
-    ),
-    llm_model="gpt-4o",
+    ocr_backend="openai_compatible",
+    ocr_model="glm-ocr",
+    ocr_base_url="https://your-provider.example/v1",
+    ocr_api_key="...",
 )
 ```
 
 ## How It Works
 
-When `MarkItDown(enable_plugins=True, llm_client=..., llm_model=...)` is called:
+When `MarkItDown(enable_plugins=True, ...)` is called:
 
 1. MarkItDown discovers the plugin via the `markitdown.plugin` entry point group
-2. It calls `register_converters()`, forwarding all kwargs including `llm_client` and `llm_model`
-3. The plugin creates an `LLMVisionOCRService` from those kwargs
+2. It calls `register_converters()`, forwarding all kwargs including OCR-related settings
+3. The plugin creates an OCR service from one of these sources:
+   - explicit `ocr_service`
+   - explicit `ocr_client` / `ocr_model`
+   - legacy `llm_client` / `llm_model`
+   - `ocr_backend="openai_compatible"` plus `ocr_model`, `ocr_base_url`, `ocr_api_key`
 4. Four OCR-enhanced converters are registered at **priority -1.0** — before the built-in converters at priority 0.0
 
 When a file is converted:
@@ -140,7 +182,7 @@ Every extracted OCR block is wrapped as:
 
 ### OCR text missing from output
 
-The most likely cause is a missing `llm_client` or `llm_model`. Verify:
+The most likely cause is missing OCR configuration. Verify either:
 
 ```python
 from openai import OpenAI
@@ -150,6 +192,18 @@ md = MarkItDown(
     enable_plugins=True,
     llm_client=OpenAI(),   # required
     llm_model="gpt-4o",    # required
+)
+```
+
+or:
+
+```python
+md = MarkItDown(
+    enable_plugins=True,
+    ocr_backend="openai_compatible",
+    ocr_model="glm-ocr",
+    ocr_base_url="https://your-provider.example/v1",
+    ocr_api_key="...",
 )
 ```
 

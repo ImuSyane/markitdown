@@ -1,11 +1,14 @@
 """
-OCR Service Layer for MarkItDown
-Provides LLM Vision-based image text extraction.
+OCR service layer for MarkItDown.
+
+Supports built-in OpenAI-compatible OCR, explicit client/model configuration,
+and user-provided OCR services/callables.
 """
 
 import base64
-from typing import Any, BinaryIO
+import os
 from dataclasses import dataclass
+from typing import Any, BinaryIO, Callable, Protocol, runtime_checkable
 
 from markitdown import StreamInfo
 
@@ -18,6 +21,48 @@ class OCRResult:
     confidence: float | None = None
     backend_used: str | None = None
     error: str | None = None
+
+
+@runtime_checkable
+class OCRService(Protocol):
+    """Minimal interface for OCR providers used by the converters."""
+
+    def extract_text(
+        self,
+        image_stream: BinaryIO,
+        prompt: str | None = None,
+        stream_info: StreamInfo | None = None,
+        **kwargs: Any,
+    ) -> OCRResult: ...
+
+
+class CallableOCRService:
+    """Adapter for user-provided OCR callables."""
+
+    def __init__(self, func: Callable[..., OCRResult | str | None]) -> None:
+        self._func = func
+
+    def extract_text(
+        self,
+        image_stream: BinaryIO,
+        prompt: str | None = None,
+        stream_info: StreamInfo | None = None,
+        **kwargs: Any,
+    ) -> OCRResult:
+        result = self._func(
+            image_stream,
+            prompt=prompt,
+            stream_info=stream_info,
+            **kwargs,
+        )
+        if isinstance(result, OCRResult):
+            return result
+        if result is None:
+            return OCRResult(text="", backend_used="custom_callable")
+        return OCRResult(
+            text=str(result).strip(),
+            backend_used="custom_callable",
+        )
 
 
 class LLMVisionOCRService:
@@ -39,6 +84,7 @@ class LLMVisionOCRService:
         """
         self.client = client
         self.model = model
+        self.backend_name = "llm_vision"
         self.default_prompt = default_prompt or (
             "Extract all text from this image. "
             "Return ONLY the extracted text, maintaining the original "
@@ -56,7 +102,7 @@ class LLMVisionOCRService:
         if self.client is None:
             return OCRResult(
                 text="",
-                backend_used="llm_vision",
+                backend_used=self.backend_name,
                 error="LLM client not configured",
             )
 
@@ -99,12 +145,149 @@ class LLMVisionOCRService:
                 ],
             )
 
-            text = response.choices[0].message.content
+            text = _extract_response_text(response)
             return OCRResult(
                 text=text.strip() if text else "",
-                backend_used="llm_vision",
+                backend_used=self.backend_name,
             )
         except Exception as e:
-            return OCRResult(text="", backend_used="llm_vision", error=str(e))
+            return OCRResult(text="", backend_used=self.backend_name, error=str(e))
         finally:
             image_stream.seek(0)
+
+
+class OpenAICompatibleOCRService(LLMVisionOCRService):
+    """OCR service for remote providers exposing OpenAI-compatible APIs."""
+
+    def __init__(
+        self,
+        client: Any,
+        model: str,
+        default_prompt: str | None = None,
+    ) -> None:
+        super().__init__(client=client, model=model, default_prompt=default_prompt)
+        self.backend_name = "openai_compatible"
+
+
+def create_ocr_service(**kwargs: Any) -> OCRService | None:
+    """Build an OCR service from kwargs/environment while preserving compatibility."""
+    explicit_service = kwargs.get("ocr_service")
+    if explicit_service is not None:
+        if hasattr(explicit_service, "extract_text"):
+            return explicit_service
+        if callable(explicit_service):
+            return CallableOCRService(explicit_service)
+        raise TypeError("ocr_service must define extract_text(...) or be callable")
+
+    ocr_backend = _first_non_empty(
+        kwargs.get("ocr_backend"),
+        os.getenv("MARKITDOWN_OCR_BACKEND"),
+    )
+    ocr_client = kwargs.get("ocr_client")
+    ocr_model = _first_non_empty(
+        kwargs.get("ocr_model"),
+        kwargs.get("llm_model"),
+        os.getenv("MARKITDOWN_OCR_MODEL"),
+    )
+    ocr_prompt = _first_non_empty(
+        kwargs.get("ocr_prompt"),
+        kwargs.get("llm_prompt"),
+        os.getenv("MARKITDOWN_OCR_PROMPT"),
+    )
+
+    if ocr_client is not None and ocr_model:
+        return LLMVisionOCRService(
+            client=ocr_client,
+            model=ocr_model,
+            default_prompt=ocr_prompt,
+        )
+
+    legacy_client = kwargs.get("llm_client")
+    if ocr_backend in (None, "", "llm_vision", "llm-vision") and legacy_client and ocr_model:
+        return LLMVisionOCRService(
+            client=legacy_client,
+            model=ocr_model,
+            default_prompt=ocr_prompt,
+        )
+
+    if ocr_backend not in ("openai_compatible", "openai-compatible"):
+        return None
+
+    if not ocr_model:
+        return None
+
+    openai_client = _build_openai_compatible_client(**kwargs)
+    if openai_client is None:
+        return None
+
+    return OpenAICompatibleOCRService(
+        client=openai_client,
+        model=ocr_model,
+        default_prompt=ocr_prompt,
+    )
+
+
+def _build_openai_compatible_client(**kwargs: Any) -> Any | None:
+    try:
+        from openai import OpenAI
+    except ImportError:
+        return None
+
+    base_url = _first_non_empty(
+        kwargs.get("ocr_base_url"),
+        kwargs.get("ocr_api_base"),
+        os.getenv("MARKITDOWN_OCR_BASE_URL"),
+    )
+    api_key = _first_non_empty(
+        kwargs.get("ocr_api_key"),
+        os.getenv("MARKITDOWN_OCR_API_KEY"),
+        os.getenv("OPENAI_API_KEY"),
+    )
+
+    client_options = dict(kwargs.get("ocr_client_options") or {})
+    if api_key:
+        client_options["api_key"] = api_key
+    if base_url:
+        client_options["base_url"] = base_url
+
+    return OpenAI(**client_options)
+
+
+def _extract_response_text(response: Any) -> str:
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return ""
+
+    message = getattr(choices[0], "message", None)
+    content = getattr(message, "content", "")
+
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if text:
+                    parts.append(str(text))
+            else:
+                text = getattr(item, "text", None)
+                if text:
+                    parts.append(str(text))
+        return "\n".join(parts)
+    return str(content or "")
+
+
+def _first_non_empty(*values: Any) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped:
+                return stripped
+            continue
+        return str(value)
+    return None
