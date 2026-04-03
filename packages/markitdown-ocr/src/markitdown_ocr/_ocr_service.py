@@ -37,7 +37,11 @@ class OCRService(Protocol):
 
 
 class CallableOCRService:
-    """Adapter for user-provided OCR callables."""
+    """Adapt a user callable to the OCRService protocol.
+
+    The callable should accept an image stream plus optional keyword arguments
+    such as prompt/stream_info, and may return OCRResult, str, or None.
+    """
 
     def __init__(self, func: Callable[..., OCRResult | str | None]) -> None:
         self._func = func
@@ -165,12 +169,26 @@ class OpenAICompatibleOCRService(LLMVisionOCRService):
         model: str,
         default_prompt: str | None = None,
     ) -> None:
+        """Initialize a dedicated OpenAI-compatible OCR backend.
+
+        This differs from LLMVisionOCRService only in backend labeling so
+        callers can distinguish explicit remote OCR-provider usage.
+        """
         super().__init__(client=client, model=model, default_prompt=default_prompt)
         self.backend_name = "openai_compatible"
 
 
 def create_ocr_service(**kwargs: Any) -> OCRService | None:
-    """Build an OCR service from kwargs/environment while preserving compatibility."""
+    """Build an OCR service from kwargs/environment while preserving compatibility.
+
+    Precedence is:
+    1. explicit ``ocr_service`` object/callable
+    2. explicit ``ocr_client`` with ``ocr_model``
+    3. legacy ``llm_client`` with ``llm_model`` when no remote OCR backend is selected
+    4. ``ocr_backend="openai_compatible"`` with OpenAI-compatible client settings
+
+    Returns an OCRService instance when configuration is sufficient, else None.
+    """
     explicit_service = kwargs.get("ocr_service")
     if explicit_service is not None:
         if hasattr(explicit_service, "extract_text"):
@@ -179,7 +197,7 @@ def create_ocr_service(**kwargs: Any) -> OCRService | None:
             return CallableOCRService(explicit_service)
         raise TypeError("ocr_service must define extract_text(...) or be callable")
 
-    ocr_backend = _first_non_empty(
+    ocr_backend = _normalize_backend_name(
         kwargs.get("ocr_backend"),
         os.getenv("MARKITDOWN_OCR_BACKEND"),
     )
@@ -203,14 +221,14 @@ def create_ocr_service(**kwargs: Any) -> OCRService | None:
         )
 
     legacy_client = kwargs.get("llm_client")
-    if ocr_backend in (None, "", "llm_vision", "llm-vision") and legacy_client and ocr_model:
+    if ocr_backend in (None, "llm_vision") and legacy_client and ocr_model:
         return LLMVisionOCRService(
             client=legacy_client,
             model=ocr_model,
             default_prompt=ocr_prompt,
         )
 
-    if ocr_backend not in ("openai_compatible", "openai-compatible"):
+    if ocr_backend != "openai_compatible":
         return None
 
     if not ocr_model:
@@ -228,6 +246,11 @@ def create_ocr_service(**kwargs: Any) -> OCRService | None:
 
 
 def _build_openai_compatible_client(**kwargs: Any) -> Any | None:
+    """Create an OpenAI client from OCR kwargs/environment.
+
+    Supports ``ocr_base_url``, ``ocr_api_base``, ``ocr_api_key``, and optional
+    ``ocr_client_options``. Returns None if the OpenAI SDK is unavailable.
+    """
     try:
         from openai import OpenAI
     except ImportError:
@@ -244,16 +267,22 @@ def _build_openai_compatible_client(**kwargs: Any) -> Any | None:
         os.getenv("OPENAI_API_KEY"),
     )
 
-    client_options = dict(kwargs.get("ocr_client_options") or {})
+    client_options = (kwargs.get("ocr_client_options") or {}).copy()
     if api_key:
         client_options["api_key"] = api_key
     if base_url:
         client_options["base_url"] = base_url
 
-    return OpenAI(**client_options)
+    try:
+        return OpenAI(**client_options)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to initialize OpenAI-compatible OCR client: {exc}"
+        ) from exc
 
 
 def _extract_response_text(response: Any) -> str:
+    """Extract text from common OpenAI-compatible response payload shapes."""
     choices = getattr(response, "choices", None) or []
     if not choices:
         return ""
@@ -281,6 +310,7 @@ def _extract_response_text(response: Any) -> str:
 
 
 def _first_non_empty(*values: Any) -> str | None:
+    """Return the first non-empty value, stripping strings and stringifying others."""
     for value in values:
         if value is None:
             continue
@@ -291,3 +321,12 @@ def _first_non_empty(*values: Any) -> str | None:
             continue
         return str(value)
     return None
+
+
+def _normalize_backend_name(*values: Any) -> str | None:
+    """Normalize backend names to lowercase underscore form."""
+    value = _first_non_empty(*values)
+    if value is None:
+        return None
+    normalized = value.strip().lower().replace("-", "_")
+    return normalized or None

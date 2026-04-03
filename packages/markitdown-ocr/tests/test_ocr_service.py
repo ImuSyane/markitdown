@@ -1,4 +1,5 @@
 import io
+from typing import Any, BinaryIO
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -20,7 +21,9 @@ def test_create_ocr_service_returns_explicit_service() -> None:
 
 
 def test_create_ocr_service_wraps_callable() -> None:
-    def custom_ocr(image_stream, **kwargs):  # noqa: ANN001, ANN202
+    def custom_ocr(
+        image_stream: BinaryIO, **kwargs: Any
+    ) -> str:  # noqa: ARG001
         return "callable text"
 
     service = create_ocr_service(ocr_service=custom_ocr)
