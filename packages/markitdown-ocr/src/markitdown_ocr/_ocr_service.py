@@ -178,6 +178,169 @@ class OpenAICompatibleOCRService(LLMVisionOCRService):
         self.backend_name = "openai_compatible"
 
 
+class PaddleOCRService:
+    """Traditional local OCR backend powered by the ``paddleocr`` package."""
+
+    def __init__(
+        self,
+        engine: Any | None = None,
+        *,
+        lang: str | None = None,
+        use_angle_cls: bool = True,
+        **engine_options: Any,
+    ) -> None:
+        self._engine = engine
+        self.lang = lang or "ch"
+        self.use_angle_cls = use_angle_cls
+        self.engine_options = engine_options
+        self.backend_name = "paddleocr"
+
+    def extract_text(
+        self,
+        image_stream: BinaryIO,
+        prompt: str | None = None,
+        stream_info: StreamInfo | None = None,
+        **kwargs: Any,
+    ) -> OCRResult:
+        """Extract text with the local PaddleOCR detection/recognition pipeline."""
+        del prompt, stream_info, kwargs
+
+        try:
+            image = _load_image_for_local_backends(image_stream)
+            result = self._get_engine().ocr(image, cls=self.use_angle_cls)
+            text, confidence = _parse_paddleocr_output(result)
+            return OCRResult(
+                text=text,
+                confidence=confidence,
+                backend_used=self.backend_name,
+            )
+        except Exception as exc:
+            return OCRResult(
+                text="",
+                backend_used=self.backend_name,
+                error=str(exc),
+            )
+        finally:
+            image_stream.seek(0)
+
+    def _get_engine(self) -> Any:
+        if self._engine is not None:
+            return self._engine
+
+        try:
+            from paddleocr import PaddleOCR
+        except ImportError as exc:
+            raise RuntimeError(
+                "paddleocr backend requires the `paddleocr` package to be installed"
+            ) from exc
+
+        self._engine = PaddleOCR(
+            lang=self.lang,
+            use_angle_cls=self.use_angle_cls,
+            **self.engine_options,
+        )
+        return self._engine
+
+
+class LocalVLMOCRService:
+    """Local VLM OCR backend for multimodal models such as PaddleOCR-VL."""
+
+    def __init__(
+        self,
+        pipeline: Any | None = None,
+        *,
+        model: str | None = None,
+        device: str | None = None,
+        default_prompt: str | None = None,
+        task: str = "image-text-to-text",
+        **pipeline_options: Any,
+    ) -> None:
+        self._pipeline = pipeline
+        self.model = model
+        self.device = device
+        self.task = task
+        self.pipeline_options = pipeline_options
+        self.backend_name = "local_vlm"
+        self.default_prompt = default_prompt or (
+            "Extract all text from this image. "
+            "Return only the recognized text in reading order."
+        )
+
+    def extract_text(
+        self,
+        image_stream: BinaryIO,
+        prompt: str | None = None,
+        stream_info: StreamInfo | None = None,
+        **kwargs: Any,
+    ) -> OCRResult:
+        """Extract text using a local multimodal generation pipeline."""
+        del stream_info
+        try:
+            image = _load_pil_image(image_stream)
+            response = self._invoke_pipeline(
+                image=image,
+                prompt=prompt or self.default_prompt,
+                **kwargs,
+            )
+            text = _extract_generated_text(response)
+            return OCRResult(
+                text=text.strip(),
+                backend_used=self.backend_name,
+            )
+        except Exception as exc:
+            return OCRResult(
+                text="",
+                backend_used=self.backend_name,
+                error=str(exc),
+            )
+        finally:
+            image_stream.seek(0)
+
+    def _invoke_pipeline(self, *, image: Any, prompt: str, **kwargs: Any) -> Any:
+        pipeline = self._get_pipeline()
+        attempts = (
+            lambda: pipeline(image, prompt=prompt, **kwargs),
+            lambda: pipeline(images=image, prompt=prompt, **kwargs),
+            lambda: pipeline(image=image, prompt=prompt, **kwargs),
+            lambda: pipeline(image, text=prompt, **kwargs),
+            lambda: pipeline(images=image, text=prompt, **kwargs),
+            lambda: pipeline(image, **kwargs),
+        )
+        last_error: Exception | None = None
+        for attempt in attempts:
+            try:
+                return attempt()
+            except TypeError as exc:
+                last_error = exc
+                continue
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Local VLM pipeline could not be invoked")
+
+    def _get_pipeline(self) -> Any:
+        if self._pipeline is not None:
+            return self._pipeline
+        if not self.model:
+            raise RuntimeError("local_vlm backend requires `ocr_model` or `ocr_vlm_pipeline`")
+
+        try:
+            from transformers import pipeline
+        except ImportError as exc:
+            raise RuntimeError(
+                "local_vlm backend requires `transformers` or an explicit `ocr_vlm_pipeline`"
+            ) from exc
+
+        pipeline_options = self.pipeline_options.copy()
+        if self.device is not None:
+            pipeline_options.setdefault("device", self.device)
+        self._pipeline = pipeline(
+            self.task,
+            model=self.model,
+            **pipeline_options,
+        )
+        return self._pipeline
+
+
 def create_ocr_service(**kwargs: Any) -> OCRService | None:
     """Build an OCR service from kwargs/environment while preserving compatibility.
 
@@ -185,7 +348,9 @@ def create_ocr_service(**kwargs: Any) -> OCRService | None:
     1. explicit ``ocr_service`` object/callable
     2. explicit ``ocr_client`` with ``ocr_model``
     3. legacy ``llm_client`` with ``llm_model`` when no remote OCR backend is selected
-    4. ``ocr_backend="openai_compatible"`` with OpenAI-compatible client settings
+    4. ``ocr_backend="paddleocr"`` for classic local OCR
+    5. ``ocr_backend="local_vlm"`` / ``paddleocr-vl-1.5`` for local multimodal OCR
+    6. ``ocr_backend="openai_compatible"`` with OpenAI-compatible client settings
 
     Returns an OCRService instance when configuration is sufficient, else None.
     """
@@ -226,6 +391,19 @@ def create_ocr_service(**kwargs: Any) -> OCRService | None:
             client=legacy_client,
             model=ocr_model,
             default_prompt=ocr_prompt,
+        )
+
+    if ocr_backend == "paddleocr":
+        return _build_paddleocr_service(**kwargs)
+
+    if ocr_backend in ("local_vlm", "vlm", "paddleocr_vl", "paddleocr_vl_1.5"):
+        vlm_kwargs = kwargs.copy()
+        vlm_kwargs.pop("ocr_model", None)
+        vlm_kwargs.pop("ocr_prompt", None)
+        return _build_local_vlm_service(
+            ocr_model=ocr_model,
+            ocr_prompt=ocr_prompt,
+            **vlm_kwargs,
         )
 
     if ocr_backend != "openai_compatible":
@@ -281,6 +459,44 @@ def _build_openai_compatible_client(**kwargs: Any) -> Any | None:
         ) from exc
 
 
+def _build_paddleocr_service(**kwargs: Any) -> PaddleOCRService:
+    """Create a local PaddleOCR service from kwargs/environment."""
+    backend_options = (kwargs.get("ocr_backend_options") or {}).copy()
+    return PaddleOCRService(
+        engine=kwargs.get("ocr_paddle_engine"),
+        lang=_first_non_empty(
+            kwargs.get("ocr_lang"),
+            os.getenv("MARKITDOWN_OCR_LANG"),
+        ),
+        use_angle_cls=_coerce_bool(
+            kwargs.get("ocr_use_angle_cls"),
+            default=_coerce_bool(os.getenv("MARKITDOWN_OCR_USE_ANGLE_CLS"), default=True),
+        ),
+        **backend_options,
+    )
+
+
+def _build_local_vlm_service(
+    *,
+    ocr_model: str | None,
+    ocr_prompt: str | None,
+    **kwargs: Any,
+) -> LocalVLMOCRService:
+    """Create a local VLM OCR service from kwargs/environment."""
+    backend_options = (kwargs.get("ocr_backend_options") or {}).copy()
+    return LocalVLMOCRService(
+        pipeline=kwargs.get("ocr_vlm_pipeline"),
+        model=ocr_model,
+        device=_first_non_empty(
+            kwargs.get("ocr_device"),
+            os.getenv("MARKITDOWN_OCR_DEVICE"),
+        ),
+        default_prompt=ocr_prompt,
+        task=_first_non_empty(kwargs.get("ocr_task")) or "image-text-to-text",
+        **backend_options,
+    )
+
+
 def _extract_response_text(response: Any) -> str:
     """Extract text from common OpenAI-compatible response payload shapes."""
     choices = getattr(response, "choices", None) or []
@@ -309,6 +525,97 @@ def _extract_response_text(response: Any) -> str:
     return str(content or "")
 
 
+def _extract_generated_text(response: Any) -> str:
+    """Extract text from common local VLM output payload shapes."""
+    if response is None:
+        return ""
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict):
+        for key in ("generated_text", "text", "content", "output"):
+            value = response.get(key)
+            if value:
+                return _extract_generated_text(value)
+        return ""
+    if isinstance(response, list):
+        parts = [_extract_generated_text(item) for item in response]
+        return "\n".join([part for part in parts if part])
+    text = getattr(response, "generated_text", None) or getattr(response, "text", None)
+    if text:
+        return _extract_generated_text(text)
+    return str(response)
+
+
+def _load_pil_image(image_stream: BinaryIO) -> Any:
+    """Load a PIL image from a stream and normalize it to RGB."""
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError("Local OCR backends require Pillow to be installed") from exc
+
+    image_stream.seek(0)
+    image = Image.open(image_stream)
+    return image.convert("RGB")
+
+
+def _load_image_for_local_backends(image_stream: BinaryIO) -> Any:
+    """Load an image into the array format local OCR libraries usually expect."""
+    image = _load_pil_image(image_stream)
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError("Local OCR backends require numpy to be installed") from exc
+    return np.array(image)
+
+
+def _parse_paddleocr_output(result: Any) -> tuple[str, float | None]:
+    """Parse PaddleOCR outputs into plain text and an average confidence score."""
+    texts: list[str] = []
+    scores: list[float] = []
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            rec_texts = node.get("rec_texts")
+            if isinstance(rec_texts, list):
+                texts.extend([str(text).strip() for text in rec_texts if str(text).strip()])
+            rec_scores = node.get("rec_scores")
+            if isinstance(rec_scores, list):
+                for score in rec_scores:
+                    try:
+                        scores.append(float(score))
+                    except (TypeError, ValueError):
+                        continue
+            for value in node.values():
+                visit(value)
+            return
+
+        if isinstance(node, (list, tuple)):
+            if (
+                len(node) == 2
+                and isinstance(node[1], (list, tuple))
+                and len(node[1]) > 0
+                and isinstance(node[1][0], str)
+            ):
+                text_candidate = node[1][0]
+                score_candidate = node[1][1] if len(node[1]) > 1 else None
+                if text_candidate:
+                    texts.append(str(text_candidate).strip())
+                if score_candidate is not None:
+                    try:
+                        scores.append(float(score_candidate))
+                    except (TypeError, ValueError):
+                        pass
+                    return
+            for item in node:
+                visit(item)
+
+    visit(result)
+
+    joined_text = "\n".join([text for text in texts if text])
+    confidence = sum(scores) / len(scores) if scores else None
+    return joined_text, confidence
+
+
 def _first_non_empty(*values: Any) -> str | None:
     """Return the first non-empty value, stripping strings and stringifying others."""
     for value in values:
@@ -330,3 +637,18 @@ def _normalize_backend_name(*values: Any) -> str | None:
         return None
     normalized = value.strip().lower().replace("-", "_")
     return normalized or None
+
+
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    """Coerce common bool-like values while preserving a supplied default."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)

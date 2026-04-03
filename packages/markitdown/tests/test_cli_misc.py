@@ -39,6 +39,8 @@ def test_build_markitdown_kwargs_prefers_cli_values(monkeypatch) -> None:
         ocr_prompt="prompt",
         ocr_base_url="https://ocr.example/v1",
         ocr_api_key="secret",
+        ocr_lang="en",
+        ocr_device="cpu",
     )
 
     kwargs = _build_markitdown_kwargs(args)
@@ -50,6 +52,8 @@ def test_build_markitdown_kwargs_prefers_cli_values(monkeypatch) -> None:
         "ocr_prompt": "prompt",
         "ocr_base_url": "https://ocr.example/v1",
         "ocr_api_key": "secret",
+        "ocr_lang": "en",
+        "ocr_device": "cpu",
     }
 
 
@@ -59,6 +63,8 @@ def test_build_markitdown_kwargs_uses_environment_defaults(monkeypatch) -> None:
     monkeypatch.setenv("MARKITDOWN_OCR_PROMPT", "extract everything")
     monkeypatch.setenv("MARKITDOWN_OCR_BASE_URL", "https://provider.example/v1")
     monkeypatch.setenv("MARKITDOWN_OCR_API_KEY", "env-secret")
+    monkeypatch.setenv("MARKITDOWN_OCR_LANG", "ch")
+    monkeypatch.setenv("MARKITDOWN_OCR_DEVICE", "cuda:0")
 
     args = Namespace(
         use_plugins=False,
@@ -67,6 +73,8 @@ def test_build_markitdown_kwargs_uses_environment_defaults(monkeypatch) -> None:
         ocr_prompt=None,
         ocr_base_url=None,
         ocr_api_key=None,
+        ocr_lang=None,
+        ocr_device=None,
     )
 
     kwargs = _build_markitdown_kwargs(args)
@@ -78,6 +86,8 @@ def test_build_markitdown_kwargs_uses_environment_defaults(monkeypatch) -> None:
         "ocr_prompt": "extract everything",
         "ocr_base_url": "https://provider.example/v1",
         "ocr_api_key": "env-secret",
+        "ocr_lang": "ch",
+        "ocr_device": "cuda:0",
     }
 
 

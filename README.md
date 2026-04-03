@@ -134,7 +134,7 @@ To find available plugins, search GitHub for the hashtag `#markitdown-plugin`. T
 
 #### markitdown-ocr Plugin
 
-The `markitdown-ocr` plugin adds OCR support to PDF, DOCX, PPTX, and XLSX converters. It supports the existing `llm_client` / `llm_model` flow, direct `ocr_service` injection, and OpenAI-compatible OCR/VLM providers via `ocr_backend="openai_compatible"`.
+The `markitdown-ocr` plugin adds OCR support to PDF, DOCX, PPTX, and XLSX converters. It supports the existing `llm_client` / `llm_model` flow, direct `ocr_service` injection, local `paddleocr`, local VLM-style OCR such as `paddleocr-vl-1.5`, and OpenAI-compatible OCR/VLM providers via `ocr_backend="openai_compatible"`.
 
 **Installation:**
 
@@ -175,6 +175,8 @@ md = MarkItDown(
 ```
 
 CLI users can provide the same settings with `--ocr-backend`, `--ocr-model`, `--ocr-base-url`, and `--ocr-api-key`, or via the `MARKITDOWN_OCR_*` environment variables.
+
+For local OCR, use `ocr_backend="paddleocr"` for classic OCR engines, and `ocr_backend="local_vlm"` / `ocr_backend="paddleocr-vl-1.5"` for multimodal local OCR models.
 
 See [`packages/markitdown-ocr/README.md`](packages/markitdown-ocr/README.md) for detailed documentation.
 

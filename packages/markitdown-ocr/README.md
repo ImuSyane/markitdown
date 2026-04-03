@@ -6,6 +6,8 @@ It supports:
 
 - the existing `llm_client` / `llm_model` pattern already used by MarkItDown
 - a dedicated `ocr_service` hook for custom OCR implementations
+- local `paddleocr` for classic OCR
+- local `local_vlm` / `paddleocr-vl-1.5` style multimodal OCR
 - OpenAI-compatible OCR/VLM providers configured with `ocr_backend="openai_compatible"`
 
 ## Features
@@ -26,6 +28,12 @@ The plugin uses whatever OpenAI-compatible client you already have. Install one 
 
 ```bash
 pip install openai
+```
+
+For local OCR you can install the backend yourself, for example:
+
+```bash
+pip install paddleocr
 ```
 
 ## Usage
@@ -90,6 +98,27 @@ class MyOCRService:
 md = MarkItDown(enable_plugins=True, ocr_service=MyOCRService())
 ```
 
+Use local PaddleOCR for traditional OCR:
+
+```python
+md = MarkItDown(
+    enable_plugins=True,
+    ocr_backend="paddleocr",
+    ocr_lang="en",
+)
+```
+
+Use a local multimodal VLM backend for models like PaddleOCR-VL-1.5:
+
+```python
+md = MarkItDown(
+    enable_plugins=True,
+    ocr_backend="paddleocr-vl-1.5",
+    ocr_model="/models/paddleocr-vl-1.5",
+    ocr_device="cuda:0",
+)
+```
+
 If no `llm_client` is provided the plugin still loads, but OCR is silently skipped — falling back to the standard built-in converter.
 
 ### Custom Prompt
@@ -121,6 +150,12 @@ md = MarkItDown(
 )
 ```
 
+### PaddleOCR vs PaddleOCR-VL / VLM
+
+- **PaddleOCR** is a traditional OCR pipeline: text detection + text recognition. It is best represented here by `ocr_backend="paddleocr"`.
+- **PaddleOCR-VL-1.5 / other VLM OCR models** are multimodal generation models. They behave more like vision-language models than classic OCR engines, so they are represented here by `ocr_backend="local_vlm"` or the alias `ocr_backend="paddleocr-vl-1.5"`.
+- In practice that means the adapter layer is intentionally split into two classes: one for classic OCR engines, one for local VLM-style OCR.
+
 ## How It Works
 
 When `MarkItDown(enable_plugins=True, ...)` is called:
@@ -131,6 +166,8 @@ When `MarkItDown(enable_plugins=True, ...)` is called:
    - explicit `ocr_service`
    - explicit `ocr_client` / `ocr_model`
    - legacy `llm_client` / `llm_model`
+   - `ocr_backend="paddleocr"` for local OCR
+   - `ocr_backend="local_vlm"` / `ocr_backend="paddleocr-vl-1.5"` for local VLM OCR
    - `ocr_backend="openai_compatible"` plus `ocr_model`, `ocr_base_url`, `ocr_api_key`
 4. Four OCR-enhanced converters are registered at **priority -1.0** — before the built-in converters at priority 0.0
 

@@ -5,8 +5,10 @@ from unittest.mock import MagicMock, patch
 
 from markitdown_ocr._ocr_service import (
     CallableOCRService,
+    LocalVLMOCRService,
     OCRResult,
     OpenAICompatibleOCRService,
+    PaddleOCRService,
     create_ocr_service,
 )
 
@@ -88,3 +90,64 @@ def test_openai_compatible_service_handles_list_content() -> None:
 
     assert result.text == "line 1\nline 2"
     assert result.backend_used == "openai_compatible"
+
+
+def test_create_ocr_service_builds_paddleocr_service() -> None:
+    engine = MagicMock()
+    engine.ocr.return_value = [
+        [
+            ([[0, 0], [1, 0], [1, 1], [0, 1]], ("第一行", 0.9)),
+            ([[0, 1], [1, 1], [1, 2], [0, 2]], ("second line", 0.7)),
+        ]
+    ]
+
+    service = create_ocr_service(
+        ocr_backend="paddleocr",
+        ocr_paddle_engine=engine,
+        ocr_lang="en",
+    )
+
+    assert isinstance(service, PaddleOCRService)
+    result = service.extract_text(_png_stream())
+
+    assert result.text == "第一行\nsecond line"
+    assert result.backend_used == "paddleocr"
+    assert result.confidence == 0.8
+
+
+def test_create_ocr_service_builds_local_vlm_service_for_paddleocr_vl_alias() -> None:
+    pipeline = MagicMock(return_value=[{"generated_text": "vlm text"}])
+
+    service = create_ocr_service(
+        ocr_backend="paddleocr-vl-1.5",
+        ocr_vlm_pipeline=pipeline,
+        ocr_model="paddleocr-vl-1.5",
+    )
+
+    assert isinstance(service, LocalVLMOCRService)
+    result = service.extract_text(_png_stream())
+
+    assert result.text == "vlm text"
+    assert result.backend_used == "local_vlm"
+
+
+def test_local_vlm_service_uses_prompt_argument() -> None:
+    captured: dict[str, Any] = {}
+
+    def pipeline(image: Any, prompt: str, **kwargs: Any) -> list[dict[str, str]]:
+        captured["prompt"] = prompt
+        return [{"generated_text": "recognized"}]
+
+    service = LocalVLMOCRService(pipeline=pipeline, model="dummy")
+    result = service.extract_text(_png_stream(), prompt="read tables")
+
+    assert result.text == "recognized"
+    assert captured["prompt"] == "read tables"
+
+
+def _png_stream() -> io.BytesIO:
+    return io.BytesIO(
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00"
+        b"\x00\x04\x00\x01\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82"
+    )

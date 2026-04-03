@@ -15,6 +15,8 @@ from ._ocr_service import (
     CallableOCRService,
     LLMVisionOCRService,
     OpenAICompatibleOCRService,
+    PaddleOCRService,
+    LocalVLMOCRService,
     create_ocr_service,
 )
 from ._pdf_converter_with_ocr import PdfConverterWithOCR
@@ -31,6 +33,8 @@ __all__ = [
     "CallableOCRService",
     "LLMVisionOCRService",
     "OpenAICompatibleOCRService",
+    "PaddleOCRService",
+    "LocalVLMOCRService",
     "create_ocr_service",
     "PdfConverterWithOCR",
     "DocxConverterWithOCR",

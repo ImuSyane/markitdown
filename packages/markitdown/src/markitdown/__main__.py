@@ -136,6 +136,16 @@ def main():
         help="API key for an OpenAI-compatible OCR API provider. Defaults to MARKITDOWN_OCR_API_KEY or OPENAI_API_KEY.",
     )
 
+    parser.add_argument(
+        "--ocr-lang",
+        help="Language hint for local OCR backends such as PaddleOCR.",
+    )
+
+    parser.add_argument(
+        "--ocr-device",
+        help="Device hint for local VLM OCR backends (for example cpu, cuda, cuda:0).",
+    )
+
     parser.add_argument("filename", nargs="?")
     args = parser.parse_args()
 
@@ -272,6 +282,16 @@ def _build_markitdown_kwargs(args: argparse.Namespace) -> dict:
         kwargs["ocr_api_key"] = os.getenv("MARKITDOWN_OCR_API_KEY")
     elif os.getenv("OPENAI_API_KEY"):
         kwargs["ocr_api_key"] = os.getenv("OPENAI_API_KEY")
+
+    if args.ocr_lang:
+        kwargs["ocr_lang"] = args.ocr_lang
+    elif os.getenv("MARKITDOWN_OCR_LANG"):
+        kwargs["ocr_lang"] = os.getenv("MARKITDOWN_OCR_LANG")
+
+    if args.ocr_device:
+        kwargs["ocr_device"] = args.ocr_device
+    elif os.getenv("MARKITDOWN_OCR_DEVICE"):
+        kwargs["ocr_device"] = os.getenv("MARKITDOWN_OCR_DEVICE")
 
     return kwargs
 
