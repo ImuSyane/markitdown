@@ -103,8 +103,6 @@ class PptxConverterWithOCR(DocumentConverter):
                             image_filename = shape.image.filename
                             image_extension = None
                             if image_filename:
-                                import os
-
                                 image_extension = os.path.splitext(image_filename)[1]
 
                             image_stream_info = StreamInfo(

@@ -298,7 +298,7 @@ class PdfConverterWithOCR(DocumentConverter):
                                             extracted_text=item["ocr_text"],
                                         )
                                         if item["asset"] is not None
-                                        else f"*[Image OCR]\n{item['ocr_text']}\n[End OCR]*"
+                                        else f"\n\n*[Image OCR]\n{item['ocr_text']}\n[End OCR]*\n"
                                     )
                                     markdown_content.append(img_marker)
                         else:
