@@ -4,10 +4,9 @@ Already has LLM-based image description, this enhances it with traditional OCR f
 """
 
 import io
+import os
 import sys
 from typing import Any, BinaryIO, Optional
-
-from typing import BinaryIO, Any, Optional
 
 from markitdown.converters import HtmlConverter
 from markitdown import DocumentConverter, DocumentConverterResult, StreamInfo
@@ -15,6 +14,7 @@ from markitdown._exceptions import (
     MissingDependencyException,
     MISSING_DEPENDENCY_MESSAGE,
 )
+from ._image_export import create_image_asset, image_export_enabled, render_image_block
 from ._ocr_service import OCRService
 
 _dependency_exc_info = None
@@ -76,7 +76,9 @@ class PptxConverterWithOCR(DocumentConverter):
 
         presentation = pptx.Presentation(file_stream)
         md_content = ""
+        assets = []
         slide_num = 0
+        export_images = image_export_enabled(**kwargs)
 
         for slide in presentation.slides:
             slide_num += 1
@@ -134,7 +136,26 @@ class PptxConverterWithOCR(DocumentConverter):
 
                     # Format extracted content using unified OCR block format
                     content = (llm_description or ocr_text or "").strip()
-                    if content:
+                    if export_images:
+                        image_filename = shape.image.filename or ""
+                        asset = create_image_asset(
+                            image_bytes=shape.image.blob,
+                            image_dir=kwargs["image_dir"],
+                            name=f"slide_{slide_num}_{shape.name}",
+                            extension=os.path.splitext(image_filename)[1],
+                            mimetype=shape.image.content_type,
+                        )
+                        assets.append(asset)
+                        md_content += (
+                            "\n"
+                            + render_image_block(
+                                asset,
+                                alt_text=shape.name or f"slide {slide_num} image",
+                                extracted_text=content or None,
+                            )
+                            + "\n"
+                        )
+                    elif content:
                         md_content += f"\n*[Image OCR]\n{content}\n[End OCR]*\n"
 
                 # Tables
@@ -183,7 +204,7 @@ class PptxConverterWithOCR(DocumentConverter):
                     md_content += notes_frame.text
                 md_content = md_content.strip()
 
-        return DocumentConverterResult(markdown=md_content.strip())
+        return DocumentConverterResult(markdown=md_content.strip(), assets=assets)
 
     def _is_picture(self, shape):
         if shape.shape_type == pptx.enum.shapes.MSO_SHAPE_TYPE.PICTURE:

@@ -4,13 +4,15 @@ import os
 import io
 import re
 import html
+import mimetypes
+import posixpath
 
 from typing import BinaryIO, Any
 from operator import attrgetter
 
 from ._html_converter import HtmlConverter
 from ._llm_caption import llm_caption
-from .._base_converter import DocumentConverter, DocumentConverterResult
+from .._base_converter import DocumentAsset, DocumentConverter, DocumentConverterResult
 from .._stream_info import StreamInfo
 from .._exceptions import MissingDependencyException, MISSING_DEPENDENCY_MESSAGE
 
@@ -81,6 +83,7 @@ class PptxConverter(DocumentConverter):
         # Perform the conversion
         presentation = pptx.Presentation(file_stream)
         md_content = ""
+        assets: list[DocumentAsset] = []
         slide_num = 0
         for slide in presentation.slides:
             slide_num += 1
@@ -140,8 +143,30 @@ class PptxConverter(DocumentConverter):
                     alt_text = re.sub(r"[\r\n\[\]]", " ", alt_text)
                     alt_text = re.sub(r"\s+", " ", alt_text).strip()
 
+                    image_dir = kwargs.get("image_dir")
+                    if isinstance(image_dir, str) and image_dir.strip():
+                        image_filename = shape.image.filename or ""
+                        image_extension = os.path.splitext(image_filename)[1]
+                        if not image_extension:
+                            guessed_extension = mimetypes.guess_extension(
+                                shape.image.content_type or ""
+                            )
+                            image_extension = guessed_extension or ".png"
+                        asset_name = re.sub(r"\W+", "_", shape.name).strip("_") or "image"
+                        asset_path = posixpath.join(
+                            image_dir.strip().strip("/").strip("\\"),
+                            f"slide_{slide_num}_{asset_name}{image_extension}",
+                        )
+                        assets.append(
+                            DocumentAsset(
+                                path=asset_path,
+                                data=shape.image.blob,
+                                mimetype=shape.image.content_type,
+                            )
+                        )
+                        md_content += f"\n![{alt_text}]({asset_path})\n"
                     # If keep_data_uris is True, use base64 encoding for images
-                    if kwargs.get("keep_data_uris", False):
+                    elif kwargs.get("keep_data_uris", False):
                         blob = shape.image.blob
                         content_type = shape.image.content_type or "image/png"
                         b64_string = base64.b64encode(blob).decode("utf-8")
@@ -197,7 +222,7 @@ class PptxConverter(DocumentConverter):
                     md_content += notes_frame.text
                 md_content = md_content.strip()
 
-        return DocumentConverterResult(markdown=md_content.strip())
+        return DocumentConverterResult(markdown=md_content.strip(), assets=assets)
 
     def _is_picture(self, shape):
         if shape.shape_type == pptx.enum.shapes.MSO_SHAPE_TYPE.PICTURE:

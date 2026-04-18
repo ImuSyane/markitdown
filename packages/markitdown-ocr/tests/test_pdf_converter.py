@@ -210,12 +210,13 @@ def test_pdf_scanned_fallback_format(svc: MockOCRService) -> None:
         mock_plumber.return_value = mock_pdf
 
         with open(path, "rb") as f:
-            md = converter._ocr_full_pages(io.BytesIO(f.read()), svc)
+            md, assets = converter._ocr_full_pages(io.BytesIO(f.read()), svc)
 
     expected = "## Page 1\n\n\n" "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*"
     assert (
         md == expected
     ), f"_ocr_full_pages must produce:\n{expected!r}\nActual:\n{md!r}"
+    assert assets == []
 
 
 # ---------------------------------------------------------------------------
@@ -232,3 +233,24 @@ def test_pdf_no_ocr_service_no_tags() -> None:
         md = converter.convert(f, StreamInfo(extension=".pdf")).text_content
     assert "*[Image OCR]" not in md
     assert "[End OCR]*" not in md
+
+
+def test_pdf_image_export_writes_original_image(tmp_path, svc: MockOCRService) -> None:
+    path = TEST_DATA_DIR / "pdf_image_middle.pdf"
+    if not path.exists():
+        pytest.skip(f"Test file not found: {path}")
+    converter = PdfConverterWithOCR()
+    with open(path, "rb") as f:
+        result = converter.convert(
+            f,
+            StreamInfo(extension=".pdf"),
+            ocr_service=svc,
+            image_dir="images",
+        )
+
+    assert result.assets
+    assert "](images/" in result.markdown
+    assert result.markdown.index("](images/") < result.markdown.index("*[Image OCR]")
+
+    written = result.write_assets(tmp_path)
+    assert written[0].exists()

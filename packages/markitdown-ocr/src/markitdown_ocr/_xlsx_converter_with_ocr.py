@@ -13,6 +13,7 @@ from markitdown._exceptions import (
     MissingDependencyException,
     MISSING_DEPENDENCY_MESSAGE,
 )
+from ._image_export import create_image_asset, image_export_enabled, render_image_block
 from ._ocr_service import OCRService
 
 # Try loading dependencies
@@ -76,10 +77,10 @@ class XlsxConverterWithOCR(DocumentConverter):
             kwargs.get("ocr_service") or self.ocr_service
         )
 
-        if ocr_service:
+        if ocr_service or image_export_enabled(**kwargs):
             # Remove ocr_service from kwargs to avoid duplicate argument error
             kwargs_without_ocr = {k: v for k, v in kwargs.items() if k != "ocr_service"}
-            return self._convert_with_ocr(
+            return self._convert_with_images(
                 file_stream, ocr_service, **kwargs_without_ocr
             )
         else:
@@ -105,14 +106,15 @@ class XlsxConverterWithOCR(DocumentConverter):
 
         return DocumentConverterResult(markdown=md_content.strip())
 
-    def _convert_with_ocr(
-        self, file_stream: BinaryIO, ocr_service: OCRService, **kwargs: Any
+    def _convert_with_images(
+        self, file_stream: BinaryIO, ocr_service: Optional[OCRService], **kwargs: Any
     ) -> DocumentConverterResult:
-        """Convert XLSX with image OCR."""
+        """Convert XLSX with inline image export and optional OCR."""
         file_stream.seek(0)
         wb = load_workbook(file_stream)
 
         md_content = ""
+        assets = []
 
         for sheet_name in wb.sheetnames:
             sheet = wb[sheet_name]
@@ -136,18 +138,40 @@ class XlsxConverterWithOCR(DocumentConverter):
                 pass
 
             # Extract and OCR images in this sheet
-            images_with_ocr = self._extract_and_ocr_sheet_images(sheet, ocr_service)
+            images_with_ocr = self._extract_and_ocr_sheet_images(
+                sheet,
+                sheet_name=sheet_name,
+                ocr_service=ocr_service,
+                image_dir=kwargs.get("image_dir"),
+            )
 
             if images_with_ocr:
                 md_content += "### Images in this sheet:\n\n"
                 for img_info in images_with_ocr:
-                    ocr_text = img_info["ocr_text"]
-                    md_content += f"*[Image OCR]\n{ocr_text}\n[End OCR]*\n\n"
+                    assets.extend(img_info["assets"])
+                    if img_info["asset"] is not None:
+                        md_content += (
+                            render_image_block(
+                                img_info["asset"],
+                                alt_text=img_info["cell_ref"],
+                                extracted_text=img_info["ocr_text"],
+                            )
+                            + "\n\n"
+                        )
+                    elif img_info["ocr_text"]:
+                        md_content += (
+                            f"*[Image OCR]\n{img_info['ocr_text']}\n[End OCR]*\n\n"
+                        )
 
-        return DocumentConverterResult(markdown=md_content.strip())
+        return DocumentConverterResult(markdown=md_content.strip(), assets=assets)
 
     def _extract_and_ocr_sheet_images(
-        self, sheet: Any, ocr_service: OCRService
+        self,
+        sheet: Any,
+        *,
+        sheet_name: str,
+        ocr_service: Optional[OCRService],
+        image_dir: Optional[str],
     ) -> list[dict]:
         """
         Extract and OCR images from an Excel sheet.
@@ -157,14 +181,14 @@ class XlsxConverterWithOCR(DocumentConverter):
             ocr_service: OCR service
 
         Returns:
-            List of dicts with 'cell_ref' and 'ocr_text'
+             List of dicts with image metadata, optional OCR, and exported assets
         """
         results = []
 
         try:
             # Check if sheet has images
             if hasattr(sheet, "_images"):
-                for img in sheet._images:
+                for index, img in enumerate(sheet._images, start=1):
                     try:
                         # Get image data
                         if hasattr(img, "_data"):
@@ -193,15 +217,37 @@ class XlsxConverterWithOCR(DocumentConverter):
                                     )
                                     cell_ref = f"{col_letter}{from_cell.row + 1}"
 
-                        # Perform OCR
-                        ocr_result = ocr_service.extract_text(image_stream)
+                        asset = None
+                        assets = []
+                        image_format = getattr(img, "format", None)
+                        image_extension = (
+                            f".{str(image_format).lower()}" if image_format else None
+                        )
+                        image_mimetype = (
+                            f"image/{str(image_format).lower()}" if image_format else None
+                        )
+                        if image_dir:
+                            asset = create_image_asset(
+                                image_bytes=image_data,
+                                image_dir=image_dir,
+                                name=f"{sheet_name}_{cell_ref}_{index}",
+                                extension=image_extension,
+                                mimetype=image_mimetype,
+                            )
+                            assets.append(asset)
 
-                        if ocr_result.text.strip():
+                        ocr_text = ""
+                        if ocr_service:
+                            ocr_result = ocr_service.extract_text(image_stream)
+                            ocr_text = ocr_result.text.strip()
+
+                        if asset is not None or ocr_text:
                             results.append(
                                 {
                                     "cell_ref": cell_ref,
-                                    "ocr_text": ocr_result.text.strip(),
-                                    "backend": ocr_result.backend_used,
+                                    "ocr_text": ocr_text,
+                                    "asset": asset,
+                                    "assets": assets,
                                 }
                             )
 

@@ -12,6 +12,7 @@ from markitdown._exceptions import (
     MissingDependencyException,
     MISSING_DEPENDENCY_MESSAGE,
 )
+from ._image_export import create_image_asset, image_export_enabled, render_image_block
 from ._ocr_service import OCRService
 
 # Import dependencies
@@ -109,9 +110,11 @@ def _extract_images_from_page(page: Any) -> list[dict]:
                     img_stream.seek(0)
 
                 if img_stream:
+                    img_stream.seek(0)
                     images_info.append(
                         {
                             "stream": img_stream,
+                            "bytes": img_stream.getvalue(),
                             "name": f"page_{page.page_number}_img_{i}",
                             "y_pos": y_pos,
                         }
@@ -182,14 +185,16 @@ class PdfConverterWithOCR(DocumentConverter):
         pdf_bytes = io.BytesIO(file_stream.read())
 
         markdown_content = []
+        assets = []
+        export_images = image_export_enabled(**kwargs)
 
         try:
             with pdfplumber.open(pdf_bytes) as pdf:
                 for page_num, page in enumerate(pdf.pages, 1):
                     markdown_content.append(f"\n## Page {page_num}\n")
 
-                    # If OCR is enabled, interleave text and images by position
-                    if ocr_service:
+                    # Interleave text and images by position when OCR or image export is enabled
+                    if ocr_service or export_images:
                         images_on_page = self._extract_page_images(pdf_bytes, page_num)
 
                         if images_on_page:
@@ -236,16 +241,32 @@ class PdfConverterWithOCR(DocumentConverter):
                             # OCR all images
                             image_data = []
                             for img_info in images_on_page:
-                                ocr_result = ocr_service.extract_text(
-                                    img_info["stream"]
-                                )
-                                if ocr_result.text.strip():
+                                asset = None
+                                if export_images:
+                                    asset = create_image_asset(
+                                        image_bytes=img_info["bytes"],
+                                        image_dir=kwargs["image_dir"],
+                                        name=img_info["name"],
+                                        extension=".png",
+                                        mimetype="image/png",
+                                    )
+                                    assets.append(asset)
+
+                                ocr_text = ""
+                                if ocr_service:
+                                    img_info["stream"].seek(0)
+                                    ocr_result = ocr_service.extract_text(
+                                        img_info["stream"]
+                                    )
+                                    ocr_text = ocr_result.text.strip()
+
+                                if asset is not None or ocr_text:
                                     image_data.append(
                                         {
                                             "y_pos": img_info["y_pos"],
                                             "name": img_info["name"],
-                                            "ocr_text": ocr_result.text,
-                                            "backend": ocr_result.backend_used,
+                                            "asset": asset,
+                                            "ocr_text": ocr_text,
                                             "type": "image",
                                         }
                                     )
@@ -270,9 +291,14 @@ class PdfConverterWithOCR(DocumentConverter):
                                 if item["type"] == "text":
                                     markdown_content.append(item["text"])
                                 else:  # image
-                                    ocr_text = item["ocr_text"]
                                     img_marker = (
-                                        f"\n\n*[Image OCR]\n{ocr_text}\n[End OCR]*\n"
+                                        render_image_block(
+                                            item["asset"],
+                                            alt_text=item["name"],
+                                            extracted_text=item["ocr_text"],
+                                        )
+                                        if item["asset"] is not None
+                                        else f"*[Image OCR]\n{item['ocr_text']}\n[End OCR]*"
                                     )
                                     markdown_content.append(img_marker)
                         else:
@@ -306,9 +332,14 @@ class PdfConverterWithOCR(DocumentConverter):
         # treat as scanned PDF and OCR full pages
         if ocr_service and (not markdown or not markdown.strip()):
             pdf_bytes.seek(0)
-            markdown = self._ocr_full_pages(pdf_bytes, ocr_service)
+            markdown, full_page_assets = self._ocr_full_pages(
+                pdf_bytes,
+                ocr_service,
+                image_dir=kwargs.get("image_dir"),
+            )
+            assets.extend(full_page_assets)
 
-        return DocumentConverterResult(markdown=markdown)
+        return DocumentConverterResult(markdown=markdown, assets=assets)
 
     def _extract_page_images(self, pdf_bytes: io.BytesIO, page_num: int) -> list[dict]:
         """
@@ -338,8 +369,12 @@ class PdfConverterWithOCR(DocumentConverter):
         return images
 
     def _ocr_full_pages(
-        self, pdf_bytes: io.BytesIO, ocr_service: OCRService
-    ) -> str:
+        self,
+        pdf_bytes: io.BytesIO,
+        ocr_service: OCRService,
+        *,
+        image_dir: Optional[str] = None,
+    ) -> tuple[str, list]:
         """
         Fallback for scanned PDFs: Convert entire pages to images and OCR them.
         Used when text extraction returns empty/whitespace results.
@@ -352,6 +387,7 @@ class PdfConverterWithOCR(DocumentConverter):
             Markdown text extracted from OCR of full pages
         """
         markdown_parts = []
+        assets = []
 
         try:
             pdf_bytes.seek(0)
@@ -365,13 +401,35 @@ class PdfConverterWithOCR(DocumentConverter):
                         img_stream = io.BytesIO()
                         page_img.original.save(img_stream, format="PNG")
                         img_stream.seek(0)
+                        asset = None
+                        if image_dir:
+                            asset = create_image_asset(
+                                image_bytes=img_stream.getvalue(),
+                                image_dir=image_dir,
+                                name=f"page_{page_num}",
+                                extension=".png",
+                                mimetype="image/png",
+                            )
+                            assets.append(asset)
 
                         # Run OCR
+                        img_stream.seek(0)
                         ocr_result = ocr_service.extract_text(img_stream)
 
                         if ocr_result.text.strip():
                             text = ocr_result.text.strip()
-                            markdown_parts.append(f"*[Image OCR]\n{text}\n[End OCR]*")
+                            if asset is not None:
+                                markdown_parts.append(
+                                    render_image_block(
+                                        asset,
+                                        alt_text=f"page {page_num}",
+                                        extracted_text=text,
+                                    )
+                                )
+                            else:
+                                markdown_parts.append(
+                                    f"*[Image OCR]\n{text}\n[End OCR]*"
+                                )
                         else:
                             markdown_parts.append(
                                 "*[No text could be extracted from this page]*"
@@ -399,12 +457,34 @@ class PdfConverterWithOCR(DocumentConverter):
                         pix = page.get_pixmap(matrix=mat)
                         img_stream = io.BytesIO(pix.tobytes("png"))
                         img_stream.seek(0)
+                        asset = None
+                        if image_dir:
+                            asset = create_image_asset(
+                                image_bytes=img_stream.getvalue(),
+                                image_dir=image_dir,
+                                name=f"page_{page_num}",
+                                extension=".png",
+                                mimetype="image/png",
+                            )
+                            assets.append(asset)
 
+                        img_stream.seek(0)
                         ocr_result = ocr_service.extract_text(img_stream)
 
                         if ocr_result.text.strip():
                             text = ocr_result.text.strip()
-                            markdown_parts.append(f"*[Image OCR]\n{text}\n[End OCR]*")
+                            if asset is not None:
+                                markdown_parts.append(
+                                    render_image_block(
+                                        asset,
+                                        alt_text=f"page {page_num}",
+                                        extracted_text=text,
+                                    )
+                                )
+                            else:
+                                markdown_parts.append(
+                                    f"*[Image OCR]\n{text}\n[End OCR]*"
+                                )
                         else:
                             markdown_parts.append(
                                 "*[No text could be extracted from this page]*"
@@ -417,6 +497,6 @@ class PdfConverterWithOCR(DocumentConverter):
                         continue
                 doc.close()
             except Exception:
-                return "*[Error: Could not process scanned PDF]*"
+                return "*[Error: Could not process scanned PDF]*", []
 
-        return "\n\n".join(markdown_parts).strip()
+        return "\n\n".join(markdown_parts).strip(), assets

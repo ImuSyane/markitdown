@@ -146,3 +146,24 @@ def test_pptx_no_ocr_service_no_tags() -> None:
         md = converter.convert(f, StreamInfo(extension=".pptx")).text_content
     assert "*[Image OCR]" not in md
     assert "[End OCR]*" not in md
+
+
+def test_pptx_image_export_writes_original_image(tmp_path, svc: MockOCRService) -> None:
+    path = TEST_DATA_DIR / "pptx_image_middle.pptx"
+    if not path.exists():
+        pytest.skip(f"Test file not found: {path}")
+    converter = PptxConverterWithOCR()
+    with open(path, "rb") as f:
+        result = converter.convert(
+            f,
+            StreamInfo(extension=".pptx"),
+            ocr_service=svc,
+            image_dir="images",
+        )
+
+    assert result.assets
+    assert "](images/" in result.markdown
+    assert "*[Image OCR]" in result.markdown
+
+    written = result.write_assets(tmp_path)
+    assert written[0].exists()

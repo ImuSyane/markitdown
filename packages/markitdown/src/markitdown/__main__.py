@@ -112,6 +112,11 @@ def main():
     )
 
     parser.add_argument(
+        "--image-dir",
+        help="Export embedded images to this relative directory and reference them from Markdown.",
+    )
+
+    parser.add_argument(
         "--ocr-backend",
         help="OCR backend for plugins (for example: llm_vision, openai_compatible).",
     )
@@ -227,10 +232,14 @@ def main():
             sys.stdin.buffer,
             stream_info=stream_info,
             keep_data_uris=args.keep_data_uris,
+            image_dir=args.image_dir,
         )
     else:
         result = markitdown.convert(
-            args.filename, stream_info=stream_info, keep_data_uris=args.keep_data_uris
+            args.filename,
+            stream_info=stream_info,
+            keep_data_uris=args.keep_data_uris,
+            image_dir=args.image_dir,
         )
 
     _handle_output(args, result)
@@ -241,7 +250,9 @@ def _handle_output(args, result: DocumentConverterResult):
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(result.markdown)
+        result.write_assets(os.path.dirname(os.path.abspath(args.output)) or ".")
     else:
+        result.write_assets(os.getcwd())
         # Handle stdout encoding errors more gracefully
         print(
             result.markdown.encode(sys.stdout.encoding, errors="replace").decode(

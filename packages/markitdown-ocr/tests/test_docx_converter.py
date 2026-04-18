@@ -171,7 +171,7 @@ def test_docx_complex_layout(svc: MockOCRService) -> None:
 def test_inject_placeholders_single_image() -> None:
     converter = DocxConverterWithOCR()
     html = "<p>Before</p><img src='x.png'/><p>After</p>"
-    result_html, texts = converter._inject_placeholders(html, {"rId1": "TEXT"})
+    result_html, texts = converter._inject_placeholders(html, ["TEXT"])
     assert "<img" not in result_html
     assert "MARKITDOWNOCRBLOCK0" in result_html
     assert texts == ["TEXT"]
@@ -180,9 +180,7 @@ def test_inject_placeholders_single_image() -> None:
 def test_inject_placeholders_two_images_sequential_tokens() -> None:
     converter = DocxConverterWithOCR()
     html = "<img src='a.png'/><p>Mid</p><img src='b.png'/>"
-    result_html, texts = converter._inject_placeholders(
-        html, {"rId1": "FIRST", "rId2": "SECOND"}
-    )
+    result_html, texts = converter._inject_placeholders(html, ["FIRST", "SECOND"])
     assert "MARKITDOWNOCRBLOCK0" in result_html
     assert "MARKITDOWNOCRBLOCK1" in result_html
     assert result_html.index("MARKITDOWNOCRBLOCK0") < result_html.index(
@@ -194,7 +192,7 @@ def test_inject_placeholders_two_images_sequential_tokens() -> None:
 def test_inject_placeholders_no_img_tag_appends_at_end() -> None:
     converter = DocxConverterWithOCR()
     html = "<p>No images</p>"
-    result_html, texts = converter._inject_placeholders(html, {"rId1": "ORPHAN"})
+    result_html, texts = converter._inject_placeholders(html, ["ORPHAN"])
     assert "MARKITDOWNOCRBLOCK0" in result_html
     assert texts == ["ORPHAN"]
 
@@ -202,9 +200,30 @@ def test_inject_placeholders_no_img_tag_appends_at_end() -> None:
 def test_inject_placeholders_empty_map_leaves_html_unchanged() -> None:
     converter = DocxConverterWithOCR()
     html = "<p>Content</p><img src='pic.jpg'/>"
-    result_html, texts = converter._inject_placeholders(html, {})
+    result_html, texts = converter._inject_placeholders(html, [])
     assert result_html == html
     assert texts == []
+
+
+def test_docx_image_export_writes_original_image(tmp_path, svc: MockOCRService) -> None:
+    path = TEST_DATA_DIR / "docx_image_middle.docx"
+    if not path.exists():
+        pytest.skip(f"Test file not found: {path}")
+    converter = DocxConverterWithOCR()
+    with open(path, "rb") as f:
+        result = converter.convert(
+            f,
+            StreamInfo(extension=".docx"),
+            ocr_service=svc,
+            image_dir="images",
+        )
+
+    assert result.assets
+    assert "](images/" in result.markdown
+    assert "*[Image OCR]" in result.markdown
+
+    written = result.write_assets(tmp_path)
+    assert written[0].exists()
 
 
 # ---------------------------------------------------------------------------

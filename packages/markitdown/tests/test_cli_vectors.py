@@ -181,6 +181,37 @@ def test_output_to_file_with_data_uris(shared_tmp_dir, test_vector) -> None:
     assert not os.path.exists(output_file), f"Output file not deleted: {output_file}"
 
 
+def test_output_to_file_with_exported_images(shared_tmp_dir) -> None:
+    output_file = os.path.join(shared_tmp_dir, "test.pptx.output.md")
+    image_dir = "images"
+
+    result = subprocess.run(
+        [
+            "python",
+            "-m",
+            "markitdown",
+            "--image-dir",
+            image_dir,
+            "-o",
+            output_file,
+            os.path.join(TEST_FILES_DIR, "test.pptx"),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, f"CLI exited with error: {result.stderr}"
+    assert os.path.exists(output_file), f"Output file not created: {output_file}"
+
+    with open(output_file, "r", encoding="utf-8") as f:
+        output_data = f.read()
+    assert "](images/" in output_data
+
+    assets_path = os.path.join(shared_tmp_dir, image_dir)
+    assert os.path.isdir(assets_path)
+    assert os.listdir(assets_path)
+
+
 if __name__ == "__main__":
     import tempfile
 

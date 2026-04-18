@@ -247,3 +247,24 @@ def test_xlsx_no_ocr_service_no_tags() -> None:
         md = converter.convert(f, StreamInfo(extension=".xlsx")).text_content
     assert "*[Image OCR]" not in md
     assert "[End OCR]*" not in md
+
+
+def test_xlsx_image_export_writes_original_image(tmp_path, svc: MockOCRService) -> None:
+    path = TEST_DATA_DIR / "xlsx_image_middle.xlsx"
+    if not path.exists():
+        pytest.skip(f"Test file not found: {path}")
+    converter = XlsxConverterWithOCR()
+    with open(path, "rb") as f:
+        result = converter.convert(
+            f,
+            StreamInfo(extension=".xlsx"),
+            ocr_service=svc,
+            image_dir="images",
+        )
+
+    assert result.assets
+    assert "](images/" in result.markdown
+    assert "*[Image OCR]" in result.markdown
+
+    written = result.write_assets(tmp_path)
+    assert written[0].exists()

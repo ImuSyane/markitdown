@@ -4,6 +4,7 @@ Extracts images from Word documents and performs OCR while maintaining context.
 """
 
 import io
+import os
 import re
 import sys
 from typing import Any, BinaryIO, Optional
@@ -15,6 +16,7 @@ from markitdown._exceptions import (
     MissingDependencyException,
     MISSING_DEPENDENCY_MESSAGE,
 )
+from ._image_export import create_image_asset, image_export_enabled, render_image_block
 from ._ocr_service import OCRService
 
 # Try loading dependencies
@@ -81,11 +83,16 @@ class DocxConverterWithOCR(HtmlConverter):
         ocr_service: Optional[OCRService] = (
             kwargs.get("ocr_service") or self.ocr_service
         )
+        export_images = image_export_enabled(**kwargs)
 
-        if ocr_service:
-            # 1. Extract and OCR images — returns raw text per image
+        if ocr_service or export_images:
+            # 1. Extract image blocks for inline insertion
             file_stream.seek(0)
-            image_ocr_map = self._extract_and_ocr_images(file_stream, ocr_service)
+            image_blocks, assets = self._extract_image_blocks(
+                file_stream,
+                ocr_service=ocr_service,
+                image_dir=kwargs.get("image_dir"),
+            )
 
             # 2. Convert DOCX → HTML via mammoth
             file_stream.seek(0)
@@ -96,8 +103,8 @@ class DocxConverterWithOCR(HtmlConverter):
 
             # 3. Replace <img> tags with plain placeholder tokens so that
             #    mammoth's HTML→markdown step never escapes our OCR markers.
-            html_with_placeholders, ocr_texts = self._inject_placeholders(
-                html_result, image_ocr_map
+            html_with_placeholders, replacement_blocks = self._inject_placeholders(
+                html_result, image_blocks
             )
 
             # 4. Convert HTML → markdown
@@ -108,12 +115,11 @@ class DocxConverterWithOCR(HtmlConverter):
 
             # 5. Swap placeholders for the actual OCR blocks (post-conversion
             #    so * and _ are never escaped by the markdown converter).
-            for i, raw_text in enumerate(ocr_texts):
+            for i, replacement in enumerate(replacement_blocks):
                 placeholder = _PLACEHOLDER.format(i)
-                ocr_block = f"*[Image OCR]\n{raw_text}\n[End OCR]*"
-                md = md.replace(placeholder, ocr_block)
+                md = md.replace(placeholder, replacement)
 
-            return DocumentConverterResult(markdown=md)
+            return DocumentConverterResult(markdown=md, assets=assets)
         else:
             # Standard conversion without OCR
             style_map = kwargs.get("style_map", None)
@@ -123,31 +129,56 @@ class DocxConverterWithOCR(HtmlConverter):
                 **kwargs,
             )
 
-    def _extract_and_ocr_images(
-        self, file_stream: BinaryIO, ocr_service: OCRService
-    ) -> dict[str, str]:
+    def _extract_image_blocks(
+        self,
+        file_stream: BinaryIO,
+        *,
+        ocr_service: Optional[OCRService],
+        image_dir: Optional[str],
+    ) -> tuple[list[str], list]:
         """
-        Extract images from DOCX and OCR them.
+        Extract images from DOCX and build replacement markdown blocks.
 
         Returns:
-            Dict mapping image relationship IDs to raw OCR text (no markers).
+            Ordered replacement blocks and exported assets.
         """
-        ocr_map = {}
+        blocks = []
+        assets = []
 
         try:
             file_stream.seek(0)
             doc = Document(file_stream)
 
-            for rel in doc.part.rels.values():
+            for index, rel in enumerate(doc.part.rels.values(), start=1):
                 if "image" in rel.target_ref.lower():
                     try:
                         image_bytes = rel.target_part.blob
-                        image_stream = io.BytesIO(image_bytes)
-                        ocr_result = ocr_service.extract_text(image_stream)
+                        asset = None
+                        if image_dir:
+                            asset = create_image_asset(
+                                image_bytes=image_bytes,
+                                image_dir=image_dir,
+                                name=f"docx_image_{index}",
+                                extension=os.path.splitext(rel.target_ref)[1],
+                            )
+                            assets.append(asset)
 
-                        if ocr_result.text.strip():
-                            # Store raw text only — markers added later
-                            ocr_map[rel.rId] = ocr_result.text.strip()
+                        ocr_text = ""
+                        if ocr_service:
+                            image_stream = io.BytesIO(image_bytes)
+                            ocr_result = ocr_service.extract_text(image_stream)
+                            ocr_text = ocr_result.text.strip()
+
+                        if asset is not None:
+                            blocks.append(
+                                render_image_block(
+                                    asset,
+                                    alt_text=f"docx image {index}",
+                                    extracted_text=ocr_text,
+                                )
+                            )
+                        elif ocr_text:
+                            blocks.append(f"*[Image OCR]\n{ocr_text}\n[End OCR]*")
 
                     except Exception:
                         continue
@@ -155,10 +186,10 @@ class DocxConverterWithOCR(HtmlConverter):
         except Exception:
             pass
 
-        return ocr_map
+        return blocks, assets
 
     def _inject_placeholders(
-        self, html: str, ocr_map: dict[str, str]
+        self, html: str, replacement_blocks: list[str]
     ) -> tuple[str, list[str]]:
         """
         Replace <img> tags with numbered placeholder tokens.
@@ -166,14 +197,13 @@ class DocxConverterWithOCR(HtmlConverter):
         Returns:
             (html_with_placeholders, ordered list of raw OCR texts)
         """
-        if not ocr_map:
+        if not replacement_blocks:
             return html, []
 
-        ocr_texts = list(ocr_map.values())
         used: list[int] = []
 
         def replace_img(match: re.Match) -> str:  # type: ignore[type-arg]
-            for i in range(len(ocr_texts)):
+            for i in range(len(replacement_blocks)):
                 if i not in used:
                     used.append(i)
                     return f"<p>{_PLACEHOLDER.format(i)}</p>"
@@ -182,8 +212,8 @@ class DocxConverterWithOCR(HtmlConverter):
         result = re.sub(r"<img[^>]*>", replace_img, html)
 
         # Any OCR texts that had no matching <img> tag go at the end
-        for i in range(len(ocr_texts)):
+        for i in range(len(replacement_blocks)):
             if i not in used:
                 result += f"<p>{_PLACEHOLDER.format(i)}</p>"
 
-        return result, ocr_texts
+        return result, replacement_blocks

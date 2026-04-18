@@ -482,6 +482,24 @@ def test_markitdown_llm() -> None:
     validate_strings(result, PPTX_TEST_STRINGS)
 
 
+def test_pptx_image_export_assets(tmp_path) -> None:
+    markitdown = MarkItDown()
+
+    result = markitdown.convert(
+        os.path.join(TEST_FILES_DIR, "test.pptx"),
+        image_dir="images",
+    )
+
+    assert result.assets
+    assert "](images/" in result.markdown
+
+    written_paths = result.write_assets(tmp_path)
+    assert written_paths
+    for written_path in written_paths:
+        assert written_path.exists()
+        assert written_path.read_bytes()
+
+
 if __name__ == "__main__":
     """Runs this file's tests from the command line."""
     for test in [

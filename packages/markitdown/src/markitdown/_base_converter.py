@@ -1,5 +1,26 @@
-from typing import Any, BinaryIO, Optional
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Any, BinaryIO, Optional, Sequence
 from ._stream_info import StreamInfo
+
+
+@dataclass(frozen=True)
+class DocumentAsset:
+    """Binary asset emitted alongside converted Markdown."""
+
+    path: str
+    data: bytes
+    mimetype: Optional[str] = None
+
+    def write_to(self, base_dir: Path | str) -> Path:
+        relative_path = PurePosixPath(self.path)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            raise ValueError(f"Unsafe asset path: {self.path}")
+
+        output_path = Path(base_dir).joinpath(*relative_path.parts)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(self.data)
+        return output_path
 
 
 class DocumentConverterResult:
@@ -10,6 +31,7 @@ class DocumentConverterResult:
         markdown: str,
         *,
         title: Optional[str] = None,
+        assets: Optional[Sequence[DocumentAsset]] = None,
     ):
         """
         Initialize the DocumentConverterResult.
@@ -20,9 +42,11 @@ class DocumentConverterResult:
         Parameters:
         - markdown: The converted Markdown text.
         - title: Optional title of the document.
+        - assets: Optional binary assets referenced by the Markdown.
         """
         self.markdown = markdown
         self.title = title
+        self.assets = list(assets or [])
 
     @property
     def text_content(self) -> str:
@@ -37,6 +61,10 @@ class DocumentConverterResult:
     def __str__(self) -> str:
         """Return the converted Markdown text."""
         return self.markdown
+
+    def write_assets(self, base_dir: Path | str) -> list[Path]:
+        """Persist emitted assets below ``base_dir``."""
+        return [asset.write_to(base_dir) for asset in self.assets]
 
 
 class DocumentConverter:
