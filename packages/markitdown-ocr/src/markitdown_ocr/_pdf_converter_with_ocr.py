@@ -110,7 +110,6 @@ def _extract_images_from_page(page: Any) -> list[dict]:
                     img_stream.seek(0)
 
                 if img_stream:
-                    img_stream.seek(0)
                     images_info.append(
                         {
                             "stream": img_stream,
@@ -254,7 +253,6 @@ class PdfConverterWithOCR(DocumentConverter):
 
                                 ocr_text = ""
                                 if ocr_service:
-                                    img_info["stream"].seek(0)
                                     ocr_result = ocr_service.extract_text(
                                         img_info["stream"]
                                     )
