@@ -13,7 +13,7 @@ from markitdown._exceptions import (
     MissingDependencyException,
     MISSING_DEPENDENCY_MESSAGE,
 )
-from ._ocr_service import LLMVisionOCRService
+from ._ocr_service import OCRBackend
 
 # Try loading dependencies
 _xlsx_dependency_exc_info = None
@@ -30,7 +30,7 @@ class XlsxConverterWithOCR(DocumentConverter):
     Extracts images with their cell positions and performs OCR.
     """
 
-    def __init__(self, ocr_service: Optional[LLMVisionOCRService] = None):
+    def __init__(self, ocr_service: Optional[OCRBackend] = None):
         super().__init__()
         self._html_converter = HtmlConverter()
         self.ocr_service = ocr_service
@@ -72,7 +72,7 @@ class XlsxConverterWithOCR(DocumentConverter):
             )  # type: ignore[union-attr]
 
         # Get OCR service if available (from kwargs or instance)
-        ocr_service: Optional[LLMVisionOCRService] = (
+        ocr_service: Optional[OCRBackend] = (
             kwargs.get("ocr_service") or self.ocr_service
         )
 
@@ -106,7 +106,7 @@ class XlsxConverterWithOCR(DocumentConverter):
         return DocumentConverterResult(markdown=md_content.strip())
 
     def _convert_with_ocr(
-        self, file_stream: BinaryIO, ocr_service: LLMVisionOCRService, **kwargs: Any
+        self, file_stream: BinaryIO, ocr_service: OCRBackend, **kwargs: Any
     ) -> DocumentConverterResult:
         """Convert XLSX with image OCR."""
         file_stream.seek(0)
@@ -142,12 +142,13 @@ class XlsxConverterWithOCR(DocumentConverter):
                 md_content += "### Images in this sheet:\n\n"
                 for img_info in images_with_ocr:
                     ocr_text = img_info["ocr_text"]
-                    md_content += f"*[Image OCR]\n{ocr_text}\n[End OCR]*\n\n"
+                    cell_ref = img_info.get("cell_ref") or "unknown"
+                    md_content += f"Image anchor: {cell_ref}\n\n{ocr_text}\n\n"
 
         return DocumentConverterResult(markdown=md_content.strip())
 
     def _extract_and_ocr_sheet_images(
-        self, sheet: Any, ocr_service: LLMVisionOCRService
+        self, sheet: Any, ocr_service: OCRBackend
     ) -> list[dict]:
         """
         Extract and OCR images from an Excel sheet.

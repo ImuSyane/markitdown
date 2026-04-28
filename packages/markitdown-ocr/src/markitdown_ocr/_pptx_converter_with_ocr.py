@@ -1,21 +1,21 @@
 """
 Enhanced PPTX Converter with improved OCR support.
-Already has LLM-based image description, this enhances it with traditional OCR fallback.
+Already has LLM-based image description, this enhances it with OCR fallback.
 """
 
 import io
 import sys
+import warnings
 from typing import Any, BinaryIO, Optional
 
-from typing import BinaryIO, Any, Optional
-
 from markitdown.converters import HtmlConverter
+from markitdown.converters._llm_caption import llm_caption
 from markitdown import DocumentConverter, DocumentConverterResult, StreamInfo
 from markitdown._exceptions import (
     MissingDependencyException,
     MISSING_DEPENDENCY_MESSAGE,
 )
-from ._ocr_service import LLMVisionOCRService
+from ._ocr_service import OCRBackend
 
 _dependency_exc_info = None
 try:
@@ -27,7 +27,7 @@ except ImportError:
 class PptxConverterWithOCR(DocumentConverter):
     """Enhanced PPTX Converter with OCR fallback."""
 
-    def __init__(self, ocr_service: Optional[LLMVisionOCRService] = None):
+    def __init__(self, ocr_service: Optional[OCRBackend] = None):
         super().__init__()
         self._html_converter = HtmlConverter()
         self.ocr_service = ocr_service
@@ -69,7 +69,7 @@ class PptxConverterWithOCR(DocumentConverter):
             )  # type: ignore[union-attr]
 
         # Get OCR service (from kwargs or instance)
-        ocr_service: Optional[LLMVisionOCRService] = (
+        ocr_service: Optional[OCRBackend] = (
             kwargs.get("ocr_service") or self.ocr_service
         )
         llm_client = kwargs.get("llm_client")
@@ -96,8 +96,6 @@ class PptxConverterWithOCR(DocumentConverter):
                     llm_description = ""
                     if llm_client and kwargs.get("llm_model"):
                         try:
-                            from ._llm_caption import llm_caption
-
                             image_filename = shape.image.filename
                             image_extension = None
                             if image_filename:
@@ -118,8 +116,12 @@ class PptxConverterWithOCR(DocumentConverter):
                                 model=kwargs.get("llm_model"),
                                 prompt=kwargs.get("llm_prompt"),
                             )
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            warnings.warn(
+                                f"markitdown-ocr: PPTX LLM caption failed for slide {slide_num}: {exc}",
+                                RuntimeWarning,
+                                stacklevel=2,
+                            )
 
                     # Try OCR if LLM failed or not available
                     ocr_text = ""
@@ -129,13 +131,17 @@ class PptxConverterWithOCR(DocumentConverter):
                             ocr_result = ocr_service.extract_text(image_stream)
                             if ocr_result.text.strip():
                                 ocr_text = ocr_result.text.strip()
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            warnings.warn(
+                                f"markitdown-ocr: PPTX OCR failed for slide {slide_num}: {exc}",
+                                RuntimeWarning,
+                                stacklevel=2,
+                            )
 
                     # Format extracted content using unified OCR block format
                     content = (llm_description or ocr_text or "").strip()
                     if content:
-                        md_content += f"\n*[Image OCR]\n{content}\n[End OCR]*\n"
+                        md_content += f"\n{content}\n"
 
                 # Tables
                 if self._is_table(shape):

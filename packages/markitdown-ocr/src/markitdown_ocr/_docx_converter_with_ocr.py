@@ -15,7 +15,7 @@ from markitdown._exceptions import (
     MissingDependencyException,
     MISSING_DEPENDENCY_MESSAGE,
 )
-from ._ocr_service import LLMVisionOCRService
+from ._ocr_service import OCRBackend
 
 # Try loading dependencies
 _dependency_exc_info = None
@@ -36,7 +36,7 @@ class DocxConverterWithOCR(HtmlConverter):
     Maintains document flow while extracting text from images inline.
     """
 
-    def __init__(self, ocr_service: Optional[LLMVisionOCRService] = None):
+    def __init__(self, ocr_service: Optional[OCRBackend] = None):
         super().__init__()
         self._html_converter = HtmlConverter()
         self.ocr_service = ocr_service
@@ -78,7 +78,7 @@ class DocxConverterWithOCR(HtmlConverter):
             )  # type: ignore[union-attr]
 
         # Get OCR service if available (from kwargs or instance)
-        ocr_service: Optional[LLMVisionOCRService] = (
+        ocr_service: Optional[OCRBackend] = (
             kwargs.get("ocr_service") or self.ocr_service
         )
 
@@ -110,8 +110,7 @@ class DocxConverterWithOCR(HtmlConverter):
             #    so * and _ are never escaped by the markdown converter).
             for i, raw_text in enumerate(ocr_texts):
                 placeholder = _PLACEHOLDER.format(i)
-                ocr_block = f"*[Image OCR]\n{raw_text}\n[End OCR]*"
-                md = md.replace(placeholder, ocr_block)
+                md = md.replace(placeholder, raw_text.strip())
 
             return DocumentConverterResult(markdown=md)
         else:
@@ -124,7 +123,7 @@ class DocxConverterWithOCR(HtmlConverter):
             )
 
     def _extract_and_ocr_images(
-        self, file_stream: BinaryIO, ocr_service: LLMVisionOCRService
+        self, file_stream: BinaryIO, ocr_service: OCRBackend
     ) -> dict[str, str]:
         """
         Extract images from DOCX and OCR them.

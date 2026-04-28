@@ -4,10 +4,7 @@ Unit tests for DocxConverterWithOCR.
 For each DOCX test file: convert with a mock OCR service then compare the
 full output string against the expected snapshot.
 
-OCR block format used by the converter:
-    *[Image OCR]
-    MOCK_OCR_TEXT_12345
-    [End OCR]*
+OCR text is inserted directly without legacy Image OCR wrapper markers.
 """
 
 import sys
@@ -60,7 +57,7 @@ def _convert(filename: str, ocr_service: MockOCRService) -> str:
 def test_docx_image_start(svc: MockOCRService) -> None:
     expected = (
         "Document with Image at Start\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "This is the main content after the header image.\n\n"
         "More text content here."
     )
@@ -77,7 +74,7 @@ def test_docx_image_middle(svc: MockOCRService) -> None:
         "# Introduction\n\n"
         "This is the introduction section.\n\n"
         "We will see an image below.\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "# Analysis\n\n"
         "This section comes after the image."
     )
@@ -95,7 +92,7 @@ def test_docx_image_end(svc: MockOCRService) -> None:
         "Main findings of the report.\n\n"
         "Details and analysis.\n\n"
         "Recommendations.\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*"
+        "MOCK_OCR_TEXT_12345"
     )
     assert _convert("docx_image_end.docx", svc) == expected
 
@@ -109,9 +106,9 @@ def test_docx_multiple_images(svc: MockOCRService) -> None:
     expected = (
         "Multi-Image Document\n\n"
         "First section\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "Second section with another image\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "Conclusion"
     )
     assert _convert("docx_multiple_images.docx", svc) == expected
@@ -127,7 +124,7 @@ def test_docx_multipage(svc: MockOCRService) -> None:
         "# Page 1 - Mixed Content\n\n"
         "This is the first paragraph on page 1.\n\n"
         "BEFORE IMAGE: Important content appears here.\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "AFTER IMAGE: This content follows the image.\n\n"
         "More text on page 1.\n\n"
         "# Page 2 - Image at End\n\n"
@@ -135,9 +132,9 @@ def test_docx_multipage(svc: MockOCRService) -> None:
         "Multiple paragraphs of text.\n\n"
         "Building up to the image...\n\n"
         "Final paragraph before image.\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "# Page 3 - Image at Start\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "Content that follows the header image.\n\n"
         "AFTER IMAGE: This text is after the image."
     )
@@ -158,7 +155,7 @@ def test_docx_complex_layout(svc: MockOCRService) -> None:
         "| Authentication | Active |\n"
         "| Encryption | Enabled |\n\n"
         "Security notice:\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*"
+        "MOCK_OCR_TEXT_12345"
     )
     assert _convert("docx_complex_layout.docx", svc) == expected
 

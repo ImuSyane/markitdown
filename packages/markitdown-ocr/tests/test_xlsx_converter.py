@@ -4,10 +4,7 @@ Unit tests for XlsxConverterWithOCR.
 For each XLSX test file: convert with a mock OCR service then compare the
 full output string against the expected snapshot.
 
-OCR block format used by the converter:
-    *[Image OCR]
-    MOCK_OCR_TEXT_12345
-    [End OCR]*
+OCR text is inserted directly without legacy Image OCR wrapper markers.
 
 Images are grouped at the end of each sheet under:
     ### Images in this sheet:
@@ -30,7 +27,7 @@ from markitdown import StreamInfo  # noqa: E402
 TEST_DATA_DIR = Path(__file__).parent / "ocr_test_data"
 
 _MOCK_TEXT = "MOCK_OCR_TEXT_12345"
-_OCR_BLOCK = f"*[Image OCR]\n{_MOCK_TEXT}\n[End OCR]*"
+_OCR_BLOCK = _MOCK_TEXT
 _IMG_SECTION = "### Images in this sheet:"
 
 
@@ -72,14 +69,16 @@ def test_xlsx_image_start(svc: MockOCRService) -> None:
         "| Widget A | 100 |\n"
         "| Widget B | 150 |\n\n"
         "### Images in this sheet:\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "Image anchor: D2\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "## Forecast Q2\n\n"
         "| Projected Sales | Unnamed: 1 |\n"
         "| --- | --- |\n"
         "| Widget A | 120 |\n"
         "| Widget B | 180 |\n\n"
         "### Images in this sheet:\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*"
+        "Image anchor: D2\n\n"
+        "MOCK_OCR_TEXT_12345"
     )
     assert _convert("xlsx_image_start.xlsx", svc) == expected
 
@@ -102,7 +101,8 @@ def test_xlsx_image_middle(svc: MockOCRService) -> None:
         "| NaN | NaN |\n"
         "| Profit Margin | 40% |\n\n"
         "### Images in this sheet:\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "Image anchor: A5\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "## Expenses\n\n"
         "| Expense Breakdown | Unnamed: 1 |\n"
         "| --- | --- |\n"
@@ -114,7 +114,8 @@ def test_xlsx_image_middle(svc: MockOCRService) -> None:
         "| NaN | NaN |\n"
         "| Savings | $5,000 |\n\n"
         "### Images in this sheet:\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*"
+        "Image anchor: A5\n\n"
+        "MOCK_OCR_TEXT_12345"
     )
     assert _convert("xlsx_image_middle.xlsx", svc) == expected
 
@@ -139,7 +140,8 @@ def test_xlsx_image_end(svc: MockOCRService) -> None:
         "| NaN | NaN |\n"
         "| Signature: | NaN |\n\n"
         "### Images in this sheet:\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "Image anchor: B10\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "## Budget\n\n"
         "| Budget Allocation | Unnamed: 1 |\n"
         "| --- | --- |\n"
@@ -153,7 +155,8 @@ def test_xlsx_image_end(svc: MockOCRService) -> None:
         "| NaN | NaN |\n"
         "| Approved: | NaN |\n\n"
         "### Images in this sheet:\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*"
+        "Image anchor: B10\n\n"
+        "MOCK_OCR_TEXT_12345"
     )
     assert _convert("xlsx_image_end.xlsx", svc) == expected
 
@@ -175,20 +178,24 @@ def test_xlsx_multiple_images(svc: MockOCRService) -> None:
         "| NaN |\n"
         "| Performance Summary |\n\n"
         "### Images in this sheet:\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "Image anchor: A4\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
+        "Image anchor: A9\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "## Details\n\n"
         "| Detailed Metrics |\n"
         "| --- |\n"
         "| System Health |\n\n"
         "### Images in this sheet:\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "Image anchor: A4\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "## Summary\n\n"
         "| Quarter Summary |\n"
         "| --- |\n"
         "| Overall Performance |\n\n"
         "### Images in this sheet:\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*"
+        "Image anchor: A4\n\n"
+        "MOCK_OCR_TEXT_12345"
     )
     assert _convert("xlsx_multiple_images.xlsx", svc) == expected
 
@@ -210,8 +217,10 @@ def test_xlsx_complex_layout(svc: MockOCRService) -> None:
         "| NaN | NaN |\n"
         "| Total | 2200 |\n\n"
         "### Images in this sheet:\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "Image anchor: D3\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
+        "Image anchor: D7\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "## Customers\n\n"
         "| Customer Metrics | Unnamed: 1 |\n"
         "| --- | --- |\n"
@@ -219,7 +228,8 @@ def test_xlsx_complex_layout(svc: MockOCRService) -> None:
         "| New Customers | 250 |\n"
         "| Retention Rate | 92% |\n\n"
         "### Images in this sheet:\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*\n\n"
+        "Image anchor: D3\n\n"
+        "MOCK_OCR_TEXT_12345\n\n"
         "## Regions\n\n"
         "| Regional Breakdown | Unnamed: 1 |\n"
         "| --- | --- |\n"
@@ -228,7 +238,8 @@ def test_xlsx_complex_layout(svc: MockOCRService) -> None:
         "| North | $800K |\n"
         "| South | $600K |\n\n"
         "### Images in this sheet:\n\n"
-        "*[Image OCR]\nMOCK_OCR_TEXT_12345\n[End OCR]*"
+        "Image anchor: D3\n\n"
+        "MOCK_OCR_TEXT_12345"
     )
     assert _convert("xlsx_complex_layout.xlsx", svc) == expected
 

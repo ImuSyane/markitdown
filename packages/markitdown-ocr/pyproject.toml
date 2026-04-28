@@ -43,6 +43,12 @@ dependencies = [
 llm = [
   "openai>=1.0.0",
 ]
+layout = [
+  "docling>=2.90.0",
+]
+paddle = [
+  "paddleocr>=3.5.0",
+]
 
 [project.urls]
 Documentation = "https://github.com/microsoft/markitdown#readme"
@@ -51,6 +57,17 @@ Source = "https://github.com/microsoft/markitdown"
 
 [tool.hatch.version]
 path = "src/markitdown_ocr/__about__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/markitdown_ocr"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/README.md",
+  "/pyproject.toml",
+  "/src/markitdown_ocr",
+  "/tests",
+]
 
 # CRITICAL: Plugin entry point - MarkItDown will discover this plugin through this entry point
 [project.entry-points."markitdown.plugin"]

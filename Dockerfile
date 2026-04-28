@@ -22,6 +22,7 @@ WORKDIR /app
 COPY . /app
 RUN pip --no-cache-dir install \
     /app/packages/markitdown[all] \
+    /app/packages/markitdown-ocr \
     /app/packages/markitdown-sample-plugin
 
 # Default USERID and GROUPID

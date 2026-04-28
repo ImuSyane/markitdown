@@ -134,18 +134,26 @@ To find available plugins, search GitHub for the hashtag `#markitdown-plugin`. T
 
 #### markitdown-ocr Plugin
 
-The `markitdown-ocr` plugin adds OCR support to PDF, DOCX, PPTX, and XLSX converters, extracting text from embedded images using LLM Vision — the same `llm_client` / `llm_model` pattern that MarkItDown already uses for image descriptions. No new ML libraries or binary dependencies required.
+The `markitdown-ocr` plugin adds OCR support to PDF, DOCX, PPTX, and XLSX converters with an explicit OCR backend choice. It currently supports an OpenAI-compatible vision backend and a PaddleOCR-VL-oriented backend, while keeping cloud image captioning separate from OCR backend selection.
 
 **Installation:**
 
 ```bash
 pip install markitdown-ocr
-pip install openai  # or any OpenAI-compatible client
+pip install openai  # for the OpenAI-compatible OCR backend
+```
+
+For the optional local Paddle backend, install the Paddle dependencies separately in the environment you want to run it from.
+
+If you also want the optional PDF layout prepass for scanned PDF pages and large embedded PDF images, install the plugin with:
+
+```bash
+pip install 'markitdown-ocr[layout]'
 ```
 
 **Usage:**
 
-Pass the same `llm_client` and `llm_model` you would use for image descriptions:
+Enable plugins and select an OCR backend through the Python API. The default OCR backend remains OpenAI-compatible when `llm_client` and `llm_model` are provided:
 
 ```python
 from markitdown import MarkItDown
@@ -160,7 +168,55 @@ result = md.convert("document_with_images.pdf")
 print(result.text_content)
 ```
 
-If no `llm_client` is provided the plugin still loads, but OCR is silently skipped and the standard built-in converter is used instead.
+To surface OCR diagnostics while tuning a backend, also pass `ocr_debug=True`.
+
+The plugin also accepts PDF-only layout controls. `pdf_layout_backend="auto"` is the default plugin behavior: when the optional Docling dependency is installed, it is used only as a layout prepass for scanned PDF pages and embedded PDF images whose bounding box covers at least `20%` of the page. OCR extraction still runs through your configured OCR backend, and if Docling is unavailable or fails, the plugin falls back to the existing PDF OCR path.
+
+PDF runs can also export plugin-managed image artifacts without touching the core package:
+
+```python
+md = MarkItDown(
+    enable_plugins=True,
+    ocr_backend="paddleocr_vl",
+    ocr_mode="local",
+    pdf_layout_backend="auto",
+    ocr_artifact_export=True,
+    ocr_artifact_dir="test-output/pdf-artifacts",
+    ocr_artifact_markdown_mode="image_and_text",
+)
+```
+
+For PDF image-like and complex regions, the plugin now emits Markdown image links plus OCR text. Artifact export is PDF-only in the current stage.
+
+For a PaddleOCR-VL-oriented backend, choose between local and server mode explicitly. Local mode auto-probes the current environment and falls back to CPU when no verified accelerator path succeeds. On Apple Silicon, local mode will also try to use a managed local MLX service path before giving up to CPU. That managed path prefers `mlx-community/PaddleOCR-VL-1.5-8bit`, starts with `http://localhost:8111/`, then increments through `8118` before it falls back to CPU.
+
+```python
+md = MarkItDown(
+    enable_plugins=True,
+    ocr_backend="paddleocr_vl",
+    ocr_mode="local",
+    ocr_api_model_name="PaddlePaddle/PaddleOCR-VL-1.5",
+    ocr_quality="medium",
+    ocr_debug=True,
+)
+```
+
+For a server-backed Paddle runtime:
+
+```python
+md = MarkItDown(
+    enable_plugins=True,
+    ocr_backend="paddleocr_vl",
+    ocr_mode="server",
+    ocr_server_url="http://localhost:8118/v1",
+    ocr_server_backend="mlx-vlm-server",  # or vllm-server on non-Apple paths
+    ocr_quality="high",
+)
+```
+
+The CLI can enable plugins with `--use-plugins`, but it does not yet expose flags for constructing OCR backends. For OCR-enabled runs, use the Python API.
+
+If no OCR backend is configured, the plugin still loads, but OCR is skipped and the standard built-in converter is used instead.
 
 See [`packages/markitdown-ocr/README.md`](packages/markitdown-ocr/README.md) for detailed documentation.
 
@@ -214,6 +270,8 @@ print(result.text_content)
 docker build -t markitdown:latest .
 docker run --rm -i markitdown:latest < ~/your-file.pdf > output.md
 ```
+
+The repository Docker image now installs `markitdown-ocr` alongside the core package, so plugin-based OCR is available in the container when you provide a Python entrypoint that constructs `MarkItDown` with the desired OCR backend configuration.
 
 ## Contributing
 
